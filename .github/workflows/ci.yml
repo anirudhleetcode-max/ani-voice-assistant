@@ -84,6 +84,15 @@ jobs:
         run: ./gradlew :app:lintDebug --no-daemon
       - name: Assemble debug
         run: ./gradlew :app:assembleDebug --no-daemon
+      # The APK's real size and checksum, in the log. Without this the only figure
+      # available afterwards is the artifact zip's, which is not the same number and is
+      # not what gets installed.
+      - name: Report the APK
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          ls -l "$apk"
+          echo "bytes=$(stat -c%s "$apk")"
+          echo "sha256=$(sha256sum "$apk" | cut -d' ' -f1)"
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
