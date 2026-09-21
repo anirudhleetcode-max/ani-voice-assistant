@@ -23,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The listening service.
@@ -224,7 +225,20 @@ class AniVoiceService : LifecycleService() {
             engine.setPaused(true)
             graph.voiceSession.startListening(playChime = true)
 
-            // Wait for the exchange to finish before listening for the wake word again.
+            // startListening dispatches to another coroutine, so the state is still IDLE
+            // when we get here. Waiting for "not active" without waiting for it to become
+            // active first would return immediately and restart the wake engine on top of
+            // the command recogniser — two things fighting over one microphone, failing
+            // intermittently and only with the screen off.
+            val started = withTimeoutOrNull(ACTIVATION_TIMEOUT_MILLIS) {
+                graph.voiceSession.state.first { it.isActive }
+            }
+            if (started == null) {
+                AniLog.w(TAG, "voice session never started; abandoning exchange")
+                ServiceState.setLastError("Ani woke up but could not start listening.")
+                return
+            }
+
             graph.voiceSession.state.first { !it.isActive }
             ServiceState.setLastCommand(System.currentTimeMillis())
         } catch (error: Exception) {
@@ -347,6 +361,9 @@ class AniVoiceService : LifecycleService() {
 
         /** Generous enough for a long command, short enough that a leak cannot flatten the battery. */
         private const val WAKE_LOCK_TIMEOUT_MILLIS = 90_000L
+
+        /** How long to wait for the voice session to actually come up after a wake. */
+        private const val ACTIVATION_TIMEOUT_MILLIS = 5_000L
 
         private const val SHORT_BACKOFF_MILLIS = 500L
         private const val LONG_BACKOFF_MILLIS = 10_000L
