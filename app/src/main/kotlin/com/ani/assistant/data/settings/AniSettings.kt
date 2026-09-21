@@ -6,6 +6,8 @@ import com.ani.nlu.response.NotificationPrivacy
 import com.ani.nlu.response.Persona
 import com.ani.nlu.response.ResponseStyle
 import com.ani.nlu.response.Verbosity
+import com.ani.assistant.voice.wake.WakeSensitivity
+import com.ani.assistant.voice.wake.WakeWordEngineId
 import com.ani.nlu.text.Language
 
 /** Which colour scheme the user picked. */
@@ -32,8 +34,9 @@ data class AniSettings(
     val assistantName: String = "Ani",
     val wakePhrases: List<String> = WakeWordMatcher.DEFAULT_PHRASES,
     val wakeWordEnabled: Boolean = true,
-    /** 0..1. Higher accepts near-misses; see WakeWordMatcher. */
-    val wakeSensitivity: Float = 0.5f,
+    /** Which detector runs. Vosk is the default: free, on-device, any phrase. */
+    val wakeEngine: WakeWordEngineId = WakeWordEngineId.VOSK,
+    val wakeSensitivity: WakeSensitivity = WakeSensitivity.MEDIUM,
     val allowLockScreenActivation: Boolean = false,
     val playActivationSound: Boolean = true,
 

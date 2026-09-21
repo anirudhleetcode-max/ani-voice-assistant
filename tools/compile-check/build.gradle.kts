@@ -33,13 +33,94 @@ java {
 }
 kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
 
-sourceSets {
-    main {
-        kotlin.srcDirs("stubs", "../../app/src/main/kotlin")
+/*
+ * Generate the R stub from the real resource files rather than maintaining it by hand.
+ * A hand-written copy drifts the moment someone adds a string, and then the harness fails
+ * for a reason that has nothing to do with the code under test.
+ */
+val generateResourceStub by tasks.registering {
+    val resDirectory = layout.projectDirectory.dir("../../app/src/main/res")
+    val outputDirectory = layout.buildDirectory.dir("generated/res-stub")
+    inputs.dir(resDirectory)
+    outputs.dir(outputDirectory)
+
+    doLast {
+        val names = mutableMapOf<String, MutableSet<String>>()
+
+        // <string name="..."/>, <color name="..."/>, <style name="..."/>
+        val declared = Regex("""<(string|color|style|bool|integer|dimen)\s+name="([^"]+)"""")
+        resDirectory.asFile.walkTopDown().filter { it.extension == "xml" }.forEach { file ->
+            declared.findAll(file.readText()).forEach { match ->
+                names.getOrPut(match.groupValues[1]) { mutableSetOf() }.add(match.groupValues[2])
+            }
+        }
+        // Drawables and mipmaps are files, not declarations.
+        listOf("drawable" to "drawable", "mipmap" to "mipmap").forEach { (type, prefix) ->
+            resDirectory.asFile.listFiles()
+                ?.filter { it.isDirectory && it.name.startsWith(prefix) }
+                ?.flatMap { it.listFiles()?.toList().orEmpty() }
+                ?.forEach { names.getOrPut(type) { mutableSetOf() }.add(it.nameWithoutExtension) }
+        }
+
+        val target = outputDirectory.get().asFile.resolve("ResourceStub.kt")
+        target.parentFile.mkdirs()
+        target.writeText(
+            buildString {
+                appendLine("// Generated from app/src/main/res by the compile-check harness.")
+                appendLine("@file:Suppress(\"unused\")")
+                appendLine()
+                appendLine("package com.ani.assistant")
+                appendLine()
+                appendLine("object R {")
+                var id = 1
+                names.toSortedMap().forEach { (type, entries) ->
+                    appendLine("    object $type {")
+                    // AGP turns "Theme.Ani" into "Theme_Ani"; match that.
+                    entries.map { it.replace('.', '_').replace('-', '_') }
+                        .distinct()
+                        .sorted()
+                        .forEach { entry ->
+                            appendLine("        const val $entry = ${id++}")
+                        }
+                    appendLine("    }")
+                }
+                appendLine("}")
+            }
+        )
     }
 }
 
+sourceSets {
+    main {
+        kotlin.srcDirs("stubs", "../../app/src/main/kotlin")
+        kotlin.srcDir(generateResourceStub.map { layout.buildDirectory.dir("generated/res-stub") })
+    }
+}
+
+/*
+ * Vosk and Porcupine ship as AARs, which a plain JVM project cannot consume. Both are on
+ * Maven Central, so fetch them and unpack the classes.jar rather than committing binaries.
+ */
+val wakeEngineAars: Configuration by configurations.creating
+
+val extractWakeEngineClasses by tasks.registering(Copy::class) {
+    val destination = layout.buildDirectory.dir("wake-engine-classes")
+    from(wakeEngineAars.elements.map { aars ->
+        aars.map { zipTree(it.asFile).matching { include("classes.jar") } }
+    })
+    // Two AARs each contain a file called classes.jar, so give them distinct names.
+    eachFile { path = "${file.parentFile.name}-classes.jar" }
+    includeEmptyDirs = false
+    into(destination)
+}
+
 dependencies {
+    wakeEngineAars("com.alphacephei:vosk-android:0.3.75@aar")
+    wakeEngineAars("ai.picovoice:porcupine-android:4.0.2@aar")
+    compileOnly(files(extractWakeEngineClasses.map { it.destinationDir.listFiles().orEmpty().toList() }))
+    // JNA comes through as a normal jar and Vosk's public API exposes it.
+    compileOnly("net.java.dev.jna:jna:5.13.0")
+
     // The genuine Android 15 (API 35) framework jar.
     compileOnly("org.robolectric:android-all:15-robolectric-12650502")
 

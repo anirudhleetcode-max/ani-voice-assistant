@@ -40,6 +40,7 @@ import com.ani.assistant.platform.alarm.AlarmLauncher
 import com.ani.assistant.platform.alarm.ReminderScheduler
 import com.ani.assistant.platform.apps.AppResolver
 import com.ani.assistant.platform.contacts.ContactResolver
+import com.ani.assistant.platform.device.BackgroundRestrictions
 import com.ani.assistant.platform.device.DeviceController
 import com.ani.assistant.platform.device.SystemSettingsLauncher
 import com.ani.assistant.platform.music.MusicController
@@ -49,9 +50,12 @@ import com.ani.assistant.voice.AndroidTtsProvider
 import com.ani.assistant.voice.SpeechRecognizerProvider
 import com.ani.assistant.voice.TtsProvider
 import com.ani.assistant.voice.VoiceSession
-import com.ani.assistant.voice.wake.SpeechWakeWordDetector
-import com.ani.assistant.voice.wake.WakeWordDetector
-import com.ani.nlu.dialog.WakeWordMatcher
+import com.ani.assistant.voice.wake.PlatformRecognizerWakeEngine
+import com.ani.assistant.voice.wake.PorcupineWakeWordEngine
+import com.ani.assistant.voice.wake.VoskModelStore
+import com.ani.assistant.voice.wake.VoskWakeWordEngine
+import com.ani.assistant.voice.wake.WakeSensitivity
+import com.ani.assistant.voice.wake.WakeWordEngineFactory
 import com.ani.nlu.text.Language
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -117,6 +121,7 @@ class AppGraph(private val context: Context) {
     val appResolver: AppResolver by lazy { AppResolver(context) }
     val deviceController: DeviceController by lazy { DeviceController(context) }
     val settingsLauncher: SystemSettingsLauncher by lazy { SystemSettingsLauncher(context) }
+    val backgroundRestrictions: BackgroundRestrictions by lazy { BackgroundRestrictions(context) }
     val communicationLauncher: CommunicationLauncher by lazy { CommunicationLauncher(context) }
     val musicController: MusicController by lazy { MusicController(context) }
     val alarmLauncher: AlarmLauncher by lazy { AlarmLauncher(context) }
@@ -130,19 +135,54 @@ class AppGraph(private val context: Context) {
 
     val ttsProvider: TtsProvider by lazy { AndroidTtsProvider(context) }
 
-    val wakeWordDetector: WakeWordDetector by lazy {
-        SpeechWakeWordDetector(
-            recognizer = speechRecognizer,
-            matcherProvider = {
-                val settings = settingsState.value
-                WakeWordMatcher(
-                    phrases = settings.effectiveWakePhrases(),
-                    sensitivity = settings.wakeSensitivity.toDouble()
-                )
-            },
-            languageProvider = { settingsState.value.language ?: Language.MIXED }
+    val voskModelStore: VoskModelStore by lazy { VoskModelStore(context) }
+
+    private val wakePhrases: () -> List<String> = { settingsState.value.effectiveWakePhrases() }
+    private val wakeSensitivity: () -> WakeSensitivity = { settingsState.value.wakeSensitivity }
+    private val micGranted: () -> Boolean = { permissionManager.isGranted(AniPermission.MICROPHONE) }
+
+    val voskWakeEngine: VoskWakeWordEngine by lazy {
+        VoskWakeWordEngine(
+            modelStore = voskModelStore,
+            phrasesProvider = wakePhrases,
+            sensitivityProvider = wakeSensitivity,
+            hasMicrophonePermission = micGranted
         )
     }
+
+    val porcupineWakeEngine: PorcupineWakeWordEngine by lazy {
+        PorcupineWakeWordEngine(
+            context = context,
+            // Read from encrypted storage on every start, so revoking the key in Settings
+            // takes effect without a restart. It is never logged and never built in.
+            accessKeyProvider = { secureStore.get(SecureStore.KEY_PICOVOICE_ACCESS_KEY) },
+            sensitivityProvider = wakeSensitivity,
+            hasMicrophonePermission = micGranted
+        )
+    }
+
+    val platformWakeEngine: PlatformRecognizerWakeEngine by lazy {
+        PlatformRecognizerWakeEngine(
+            recognizer = speechRecognizer,
+            phrasesProvider = wakePhrases,
+            sensitivityProvider = wakeSensitivity,
+            languageProvider = { settingsState.value.language ?: Language.MIXED },
+            hasMicrophonePermission = micGranted
+        )
+    }
+
+    val wakeEngineFactory: WakeWordEngineFactory by lazy {
+        WakeWordEngineFactory(voskWakeEngine, porcupineWakeEngine, platformWakeEngine)
+    }
+
+    /**
+     * The engine that will actually run, given what is installed and licensed.
+     *
+     * Recomputed rather than cached: the user can download the Vosk model or paste a
+     * Picovoice key at any moment, and the service should pick that up on its next start.
+     */
+    suspend fun selectWakeEngine(): WakeWordEngineFactory.Selection =
+        wakeEngineFactory.select(settingsState.value.wakeEngine)
 
     val voiceSession: VoiceSession by lazy {
         VoiceSession(

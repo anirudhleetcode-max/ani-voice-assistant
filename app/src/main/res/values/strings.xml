@@ -7,6 +7,7 @@
     <string name="listening_channel_name">Listening</string>
     <string name="listening_channel_description">Shown whenever Ani is listening for your wake phrase.</string>
     <string name="listening_notification_title">Ani is listening for \"%1$s\"</string>
+    <string name="listening_notification_active">Ani is listening to you</string>
     <string name="listening_notification_text">Tap to open. Swipe to stop listening.</string>
     <string name="listening_notification_stop">Stop listening</string>
 

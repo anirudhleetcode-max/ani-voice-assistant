@@ -23,6 +23,7 @@ import com.ani.assistant.ui.screens.DiagnosticEntry
 import com.ani.assistant.ui.screens.DiagnosticState
 import com.ani.assistant.ui.theme.AniTheme
 import com.ani.assistant.voice.AniVoiceService
+import com.ani.assistant.voice.ServiceState
 import com.ani.assistant.voice.TtsAvailability
 import com.ani.nlu.text.Language
 import kotlinx.coroutines.flow.first
@@ -74,6 +75,18 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val settings by viewModel.settings.collectAsStateWithLifecycle()
+            val serviceStatus by ServiceState.status.collectAsStateWithLifecycle()
+
+            val wakeEngineNote = buildString {
+                append(graph.wakeEngineFactory.engineFor(settings.wakeEngine).costDescription)
+                serviceStatus.fellBackBecause?.let {
+                    append("\n\nRunning ")
+                    append(serviceStatus.activeEngine?.name?.lowercase() ?: "another engine")
+                    append(" instead, because ")
+                    append(it)
+                    append('.')
+                }
+            }
 
             AniTheme(
                 preference = settings.theme,
@@ -82,7 +95,9 @@ class MainActivity : ComponentActivity() {
                 AniApp(
                     viewModel = viewModel,
                     appVersion = BuildConfig.VERSION_NAME,
-                    wakeWordCostNote = graph.wakeWordDetector.costDescription,
+                    wakeWordCostNote = graph.wakeEngineFactory
+                        .engineFor(settings.wakeEngine)
+                        .costDescription,
                     diagnostics = ::buildDiagnostics,
                     unhandledIntents = graph.toolRegistry.unhandledIntents().map { it.name },
                     notificationApps = notificationApps,
@@ -90,6 +105,13 @@ class MainActivity : ComponentActivity() {
                         graph.permissionManager.isNotificationListenerEnabled()
                     },
                     isListenerConnected = { AniNotificationListenerService.isConnected },
+                    wakeEngineOptions = graph.wakeEngineFactory.all().map { it.id to it.displayName },
+                    wakeEngineNote = wakeEngineNote,
+                    deviceDescription = graph.backgroundRestrictions.deviceDescription(),
+                    hasAggressiveBatteryManager =
+                        graph.backgroundRestrictions.hasAggressiveBatteryManager(),
+                    restrictionChecks = { graph.backgroundRestrictions.checks() },
+                    onOpenRestriction = { graph.backgroundRestrictions.open(it) },
                     onRequestPermission = ::requestPermission,
                     onOpenNotificationSettings = {
                         openSettingsFor(AniPermission.NOTIFICATION_ACCESS)
@@ -173,141 +195,227 @@ class MainActivity : ComponentActivity() {
         val recogniserAvailable = graph.speechRecognizer.isAvailable()
         val teluguVoice = graph.ttsProvider.availabilityFor(Language.TELUGU)
         val notificationAccess = permissions.isNotificationListenerEnabled()
+        val status = ServiceState.status.value
+        val restrictions = graph.backgroundRestrictions
 
-        return listOf(
-            DiagnosticEntry(
-                label = "Microphone",
-                value = if (permissions.isGranted(AniPermission.MICROPHONE)) "Ready" else "Blocked",
-                state = if (permissions.isGranted(AniPermission.MICROPHONE)) {
-                    DiagnosticState.OK
-                } else {
-                    DiagnosticState.PROBLEM
-                }
-            ),
-            DiagnosticEntry(
-                label = "Speech recognition",
-                value = if (recogniserAvailable) "Ready" else "Unavailable",
-                state = if (recogniserAvailable) DiagnosticState.OK else DiagnosticState.PROBLEM,
-                detail = if (recogniserAvailable) null else "No recogniser installed on this device."
-            ),
-            DiagnosticEntry(
-                label = "Telugu voice",
-                value = when (teluguVoice) {
-                    TtsAvailability.READY -> "Installed"
-                    TtsAvailability.NEEDS_DOWNLOAD -> "Needs download"
-                    TtsAvailability.UNSUPPORTED -> "Not supported"
-                    TtsAvailability.UNAVAILABLE -> "Engine error"
-                },
-                state = when (teluguVoice) {
-                    TtsAvailability.READY -> DiagnosticState.OK
-                    TtsAvailability.NEEDS_DOWNLOAD -> DiagnosticState.WARNING
-                    else -> DiagnosticState.PROBLEM
-                },
-                detail = if (teluguVoice != TtsAvailability.READY) {
-                    "Ani will speak with the default voice until a Telugu voice is installed. " +
-                        "Settings > Languages > Text-to-speech."
-                } else {
-                    null
-                }
-            ),
-            DiagnosticEntry(
-                label = "Notification access",
-                value = when {
-                    notificationAccess && AniNotificationListenerService.isConnected -> "Connected"
-                    notificationAccess -> "Granted, reconnecting"
-                    else -> "Off"
-                },
-                state = when {
-                    notificationAccess && AniNotificationListenerService.isConnected -> DiagnosticState.OK
-                    notificationAccess -> DiagnosticState.WARNING
-                    else -> DiagnosticState.NEUTRAL
-                }
-            ),
-            DiagnosticEntry(
-                label = "Contacts",
-                value = if (permissions.isGranted(AniPermission.CONTACTS)) "Allowed" else "Not allowed",
-                state = if (permissions.isGranted(AniPermission.CONTACTS)) {
-                    DiagnosticState.OK
-                } else {
-                    DiagnosticState.NEUTRAL
-                }
-            ),
-            DiagnosticEntry(
-                label = "Place calls directly",
-                value = if (permissions.isGranted(AniPermission.PHONE)) "Allowed" else "Dialler only",
-                state = if (permissions.isGranted(AniPermission.PHONE)) {
-                    DiagnosticState.OK
-                } else {
-                    DiagnosticState.WARNING
-                },
-                detail = if (permissions.isGranted(AniPermission.PHONE)) {
-                    null
-                } else {
-                    "Ani opens the dialler with the number filled in; you press call."
-                }
-            ),
-            DiagnosticEntry(
-                label = "Exact alarms",
-                value = if (permissions.canScheduleExactAlarms()) "Allowed" else "Inexact",
-                state = if (permissions.canScheduleExactAlarms()) {
-                    DiagnosticState.OK
-                } else {
-                    DiagnosticState.WARNING
-                },
-                detail = if (permissions.canScheduleExactAlarms()) {
-                    null
-                } else {
-                    "Reminders may be delivered a few minutes late."
-                }
-            ),
-            DiagnosticEntry(
-                label = "Do Not Disturb access",
-                value = if (permissions.isDndAccessGranted()) "Allowed" else "Not allowed",
-                state = if (permissions.isDndAccessGranted()) {
-                    DiagnosticState.OK
-                } else {
-                    DiagnosticState.NEUTRAL
-                }
-            ),
-            DiagnosticEntry(
-                label = "Encrypted storage",
-                value = if (graph.secureStore.isAvailable) "Ready" else "Unavailable",
-                state = if (graph.secureStore.isAvailable) DiagnosticState.OK else DiagnosticState.PROBLEM,
-                detail = if (graph.secureStore.isAvailable) {
-                    null
-                } else {
-                    "Integration tokens will not be saved on this device."
-                }
-            ),
-            DiagnosticEntry(
-                label = "AI backend",
-                value = if (BuildConfig.AI_BACKEND_URL.isBlank()) "Not configured" else "Configured",
-                state = if (BuildConfig.AI_BACKEND_URL.isBlank()) {
-                    DiagnosticState.NEUTRAL
-                } else {
-                    DiagnosticState.OK
-                },
-                detail = if (BuildConfig.AI_BACKEND_URL.isBlank()) {
-                    "Open questions are answered offline. See AI_INTEGRATION.md."
-                } else {
-                    null
-                }
-            ),
-            DiagnosticEntry(
-                label = "Wake word service",
-                value = if (graph.canListen()) "Available" else "Unavailable",
-                state = if (graph.canListen()) DiagnosticState.OK else DiagnosticState.NEUTRAL,
-                detail = graph.wakeWordDetector.costDescription
-            ),
-            DiagnosticEntry(
-                label = "Tools registered",
-                value = "${graph.toolRegistry.registeredTools.size}",
-                state = DiagnosticState.NEUTRAL
+        return buildList {
+            add(
+                DiagnosticEntry(
+                    label = "Voice service",
+                    value = if (status.isRunning) "Running" else "Stopped",
+                    state = if (status.isRunning) DiagnosticState.OK else DiagnosticState.NEUTRAL
+                )
             )
-        )
+            add(
+                DiagnosticEntry(
+                    label = "Wake engine",
+                    value = when {
+                        !status.isRunning -> "Stopped"
+                        status.wakeEngineReady -> status.activeEngine?.name?.readableEngine() ?: "Ready"
+                        else -> "Error"
+                    },
+                    state = when {
+                        !status.isRunning -> DiagnosticState.NEUTRAL
+                        status.wakeEngineReady -> DiagnosticState.OK
+                        else -> DiagnosticState.PROBLEM
+                    },
+                    detail = status.fellBackBecause?.let { "Fell back because $it." }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Wake model",
+                    value = if (graph.voskModelStore.isInstalled()) "Installed" else "Not installed",
+                    state = if (graph.voskModelStore.isInstalled()) {
+                        DiagnosticState.OK
+                    } else {
+                        DiagnosticState.WARNING
+                    },
+                    detail = if (graph.voskModelStore.isInstalled()) {
+                        null
+                    } else {
+                        "The on-device wake engine needs a one-time ~40 MB download."
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Microphone",
+                    value = if (permissions.isGranted(AniPermission.MICROPHONE)) "Available" else "Blocked",
+                    state = if (permissions.isGranted(AniPermission.MICROPHONE)) {
+                        DiagnosticState.OK
+                    } else {
+                        DiagnosticState.PROBLEM
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Speech recognition",
+                    value = if (recogniserAvailable) "Ready" else "Error",
+                    state = if (recogniserAvailable) DiagnosticState.OK else DiagnosticState.PROBLEM,
+                    detail = if (recogniserAvailable) null else "No recogniser installed on this device."
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Text to speech",
+                    value = when (teluguVoice) {
+                        TtsAvailability.READY -> "Ready"
+                        TtsAvailability.NEEDS_DOWNLOAD -> "Telugu voice missing"
+                        TtsAvailability.UNSUPPORTED -> "No Telugu voice"
+                        TtsAvailability.UNAVAILABLE -> "Error"
+                    },
+                    state = when (teluguVoice) {
+                        TtsAvailability.READY -> DiagnosticState.OK
+                        TtsAvailability.NEEDS_DOWNLOAD -> DiagnosticState.WARNING
+                        else -> DiagnosticState.PROBLEM
+                    },
+                    detail = if (teluguVoice != TtsAvailability.READY) {
+                        "Settings > System > Languages > Text-to-speech > Install voice data > Telugu."
+                    } else {
+                        null
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Battery restriction",
+                    value = when {
+                        restrictions.isIgnoringBatteryOptimisations() -> "Unrestricted"
+                        else -> "Optimised"
+                    },
+                    state = if (restrictions.isIgnoringBatteryOptimisations()) {
+                        DiagnosticState.OK
+                    } else {
+                        DiagnosticState.WARNING
+                    },
+                    detail = "OEM auto-start lists cannot be read by any app. See Keep Ani Ready."
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Notification access",
+                    value = when {
+                        notificationAccess && AniNotificationListenerService.isConnected -> "Enabled"
+                        notificationAccess -> "Granted, reconnecting"
+                        else -> "Disabled"
+                    },
+                    state = when {
+                        notificationAccess && AniNotificationListenerService.isConnected -> DiagnosticState.OK
+                        notificationAccess -> DiagnosticState.WARNING
+                        else -> DiagnosticState.NEUTRAL
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Contacts",
+                    value = if (permissions.isGranted(AniPermission.CONTACTS)) "Granted" else "Denied",
+                    state = if (permissions.isGranted(AniPermission.CONTACTS)) {
+                        DiagnosticState.OK
+                    } else {
+                        DiagnosticState.NEUTRAL
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Phone",
+                    value = if (permissions.isGranted(AniPermission.PHONE)) "Granted" else "Denied",
+                    state = if (permissions.isGranted(AniPermission.PHONE)) {
+                        DiagnosticState.OK
+                    } else {
+                        DiagnosticState.WARNING
+                    },
+                    detail = if (permissions.isGranted(AniPermission.PHONE)) {
+                        null
+                    } else {
+                        "Ani opens the dialler with the number filled in; you press call."
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Exact alarms",
+                    value = if (permissions.canScheduleExactAlarms()) "Granted" else "Inexact",
+                    state = if (permissions.canScheduleExactAlarms()) {
+                        DiagnosticState.OK
+                    } else {
+                        DiagnosticState.WARNING
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Encrypted storage",
+                    value = if (graph.secureStore.isAvailable) "Ready" else "Error",
+                    state = if (graph.secureStore.isAvailable) DiagnosticState.OK else DiagnosticState.PROBLEM
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "AI backend",
+                    value = if (BuildConfig.AI_BACKEND_URL.isBlank()) "Not configured" else "Configured",
+                    state = if (BuildConfig.AI_BACKEND_URL.isBlank()) {
+                        DiagnosticState.NEUTRAL
+                    } else {
+                        DiagnosticState.OK
+                    },
+                    detail = if (BuildConfig.AI_BACKEND_URL.isBlank()) {
+                        "Open questions are answered offline. See AI_INTEGRATION.md."
+                    } else {
+                        null
+                    }
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Last wake",
+                    value = status.lastWakeAtMillis.asTimestamp(),
+                    state = DiagnosticState.NEUTRAL
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Last command",
+                    value = status.lastCommandAtMillis.asTimestamp(),
+                    state = DiagnosticState.NEUTRAL
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Last error",
+                    value = if (status.lastError == null) "None" else "See detail",
+                    state = if (status.lastError == null) DiagnosticState.OK else DiagnosticState.WARNING,
+                    // ServiceState only ever holds safe sentences: no user content reaches it.
+                    detail = status.lastError
+                )
+            )
+            add(
+                DiagnosticEntry(
+                    label = "Tools registered",
+                    value = "${graph.toolRegistry.registeredTools.size}",
+                    state = DiagnosticState.NEUTRAL
+                )
+            )
+        }
+    }
+
+    private fun Long?.asTimestamp(): String =
+        this?.let { DIAGNOSTIC_TIME_FORMAT.format(java.util.Date(it)) } ?: "Never"
+
+    private fun String.readableEngine(): String = when (this) {
+        "VOSK" -> "Ready (on-device)"
+        "PORCUPINE" -> "Ready (Porcupine)"
+        "PLATFORM_RECOGNIZER" -> "Ready (phone recogniser)"
+        else -> "Ready"
     }
 
     private companion object {
         const val TAG = "AniMainActivity"
+
+        val DIAGNOSTIC_TIME_FORMAT =
+            java.text.SimpleDateFormat("d MMM, HH:mm:ss", java.util.Locale.getDefault())
     }
 }

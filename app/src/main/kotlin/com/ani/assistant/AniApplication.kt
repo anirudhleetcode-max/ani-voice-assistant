@@ -47,6 +47,11 @@ class AniApplication : Application() {
         graph.reminderScheduler.clearFired()
         graph.permissionManager.refresh()
         graph.appResolver.invalidate()
+
+        // If the wake model was bundled into assets at build time, unpack it once. If it
+        // was not, this is a no-op and the user downloads it from Settings.
+        graph.voskModelStore.installFromAssetsIfPresent()
+        graph.voskModelStore.refreshState()
     }
 
     companion object {

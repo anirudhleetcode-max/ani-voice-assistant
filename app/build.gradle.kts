@@ -144,6 +144,11 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
 
+    // Wake-word engines. Both ship native libraries; see docs/WAKE_WORD.md for the
+    // trade-offs and for why Vosk is the default.
+    implementation(libs.vosk.android)
+    implementation(libs.porcupine.android)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)

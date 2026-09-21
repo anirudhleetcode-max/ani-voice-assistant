@@ -42,6 +42,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+      Held only while a conversation is in progress, with a hard timeout. Without it the
+      CPU can suspend between the recogniser's callbacks when the screen is off, and the
+      command is lost half-way through.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Only needed for "location share chey"; declared optional and requested on use. -->

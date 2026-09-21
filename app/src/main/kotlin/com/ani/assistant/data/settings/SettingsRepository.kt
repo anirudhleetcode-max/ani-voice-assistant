@@ -12,6 +12,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ani.assistant.core.log.AniLog
+import com.ani.assistant.voice.wake.WakeSensitivity
+import com.ani.assistant.voice.wake.WakeWordEngineId
 import com.ani.nlu.dialog.ConfirmationLevel
 import com.ani.nlu.response.NotificationPrivacy
 import com.ani.nlu.response.Persona
@@ -73,7 +75,10 @@ class SettingsRepository(private val context: Context) {
                 ?.filter { it.isNotEmpty() }
                 ?: defaults.wakePhrases,
             wakeWordEnabled = this[Keys.wakeWordEnabled] ?: defaults.wakeWordEnabled,
-            wakeSensitivity = this[Keys.wakeSensitivity] ?: defaults.wakeSensitivity,
+            wakeEngine = this[Keys.wakeEngine]?.let { enumOrNull<WakeWordEngineId>(it) }
+                ?: defaults.wakeEngine,
+            wakeSensitivity = this[Keys.wakeSensitivity]?.let { enumOrNull<WakeSensitivity>(it) }
+                ?: defaults.wakeSensitivity,
             allowLockScreenActivation = this[Keys.lockScreenActivation]
                 ?: defaults.allowLockScreenActivation,
             playActivationSound = this[Keys.activationSound] ?: defaults.playActivationSound,
@@ -122,7 +127,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.assistantName] = value.assistantName
         this[Keys.wakePhrases] = value.wakePhrases.joinToString("\n")
         this[Keys.wakeWordEnabled] = value.wakeWordEnabled
-        this[Keys.wakeSensitivity] = value.wakeSensitivity
+        this[Keys.wakeEngine] = value.wakeEngine.name
+        this[Keys.wakeSensitivity] = value.wakeSensitivity.name
         this[Keys.lockScreenActivation] = value.allowLockScreenActivation
         this[Keys.activationSound] = value.playActivationSound
 
@@ -165,7 +171,10 @@ class SettingsRepository(private val context: Context) {
         val assistantName = stringPreferencesKey("assistant_name")
         val wakePhrases = stringPreferencesKey("wake_phrases")
         val wakeWordEnabled = booleanPreferencesKey("wake_word_enabled")
-        val wakeSensitivity = floatPreferencesKey("wake_sensitivity")
+        val wakeEngine = stringPreferencesKey("wake_engine")
+        // Stored as a name, not the old float: the three levels mean different things to
+        // different engines, and a raw number could not carry that.
+        val wakeSensitivity = stringPreferencesKey("wake_sensitivity_level")
         val lockScreenActivation = booleanPreferencesKey("lock_screen_activation")
         val activationSound = booleanPreferencesKey("activation_sound")
 

@@ -28,11 +28,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ani.assistant.core.permission.AniPermission
 import com.ani.assistant.platform.apps.InstalledApp
+import com.ani.assistant.platform.device.RestrictionCheck
+import com.ani.assistant.voice.wake.WakeWordEngineId
 import com.ani.assistant.ui.screens.CommandsScreen
 import com.ani.assistant.ui.screens.DiagnosticEntry
 import com.ani.assistant.ui.screens.DiagnosticsScreen
 import com.ani.assistant.ui.screens.HistoryScreen
 import com.ani.assistant.ui.screens.HomeScreen
+import com.ani.assistant.ui.screens.KeepReadyScreen
 import com.ani.assistant.ui.screens.MemoryScreen
 import com.ani.assistant.ui.screens.NotificationAccessScreen
 import com.ani.assistant.ui.screens.OnboardingScreen
@@ -58,6 +61,12 @@ fun AniApp(
     notificationApps: List<InstalledApp>,
     isNotificationAccessGranted: () -> Boolean,
     isListenerConnected: () -> Boolean,
+    wakeEngineOptions: List<Pair<WakeWordEngineId, String>>,
+    wakeEngineNote: String,
+    deviceDescription: String,
+    hasAggressiveBatteryManager: Boolean,
+    restrictionChecks: () -> List<RestrictionCheck>,
+    onOpenRestriction: (RestrictionCheck) -> Unit,
     onRequestPermission: (AniPermission) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     navController: NavHostController = rememberNavController()
@@ -152,6 +161,12 @@ fun AniApp(
                 notificationApps = notificationApps,
                 isNotificationAccessGranted = isNotificationAccessGranted,
                 isListenerConnected = isListenerConnected,
+                wakeEngineOptions = wakeEngineOptions,
+                wakeEngineNote = wakeEngineNote,
+                deviceDescription = deviceDescription,
+                hasAggressiveBatteryManager = hasAggressiveBatteryManager,
+                restrictionChecks = restrictionChecks,
+                onOpenRestriction = onOpenRestriction,
                 onRequestPermission = onRequestPermission,
                 onOpenNotificationSettings = onOpenNotificationSettings
             )
@@ -170,6 +185,12 @@ private fun AniNavHost(
     notificationApps: List<InstalledApp>,
     isNotificationAccessGranted: () -> Boolean,
     isListenerConnected: () -> Boolean,
+    wakeEngineOptions: List<Pair<WakeWordEngineId, String>>,
+    wakeEngineNote: String,
+    deviceDescription: String,
+    hasAggressiveBatteryManager: Boolean,
+    restrictionChecks: () -> List<RestrictionCheck>,
+    onOpenRestriction: (RestrictionCheck) -> Unit,
     onRequestPermission: (AniPermission) -> Unit,
     onOpenNotificationSettings: () -> Unit
 ) {
@@ -234,16 +255,23 @@ private fun AniNavHost(
 
         composable(AniDestination.SETTINGS.route) {
             val settings by viewModel.settings.collectAsStateWithLifecycle()
+            val wakeModel by viewModel.wakeModelState.collectAsStateWithLifecycle()
             SettingsScreen(
                 settings = settings,
                 appVersion = appVersion,
                 wakeWordCostNote = wakeWordCostNote,
+                wakeEngineOptions = wakeEngineOptions,
+                wakeEngineNote = wakeEngineNote,
+                wakeModelState = wakeModel,
+                onDownloadWakeModel = viewModel::downloadWakeModel,
+                onRemoveWakeModel = viewModel::removeWakeModel,
                 onUpdate = viewModel::updateSettings,
                 onOpenPrivacy = { navController.navigate(AniDestination.PRIVACY.route) },
                 onOpenDiagnostics = { navController.navigate(AniDestination.DIAGNOSTICS.route) },
                 onOpenNotificationAccess = {
                     navController.navigate(AniDestination.NOTIFICATION_SETTINGS.route)
-                }
+                },
+                onOpenKeepReady = { navController.navigate(AniDestination.KEEP_READY.route) }
             )
         }
 
@@ -273,6 +301,16 @@ private fun AniNavHost(
                 entries = diagnostics(),
                 unhandledIntents = unhandledIntents,
                 onRefresh = viewModel::refreshPermissions
+            )
+        }
+
+        composable(AniDestination.KEEP_READY.route) {
+            KeepReadyScreen(
+                deviceDescription = deviceDescription,
+                checks = restrictionChecks(),
+                hasAggressiveBatteryManager = hasAggressiveBatteryManager,
+                onOpen = onOpenRestriction,
+                onRecheck = viewModel::refreshPermissions
             )
         }
 

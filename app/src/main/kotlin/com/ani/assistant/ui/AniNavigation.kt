@@ -26,7 +26,8 @@ enum class AniDestination(
     DIAGNOSTICS("diagnostics", "Diagnostics", null, false),
     WAKE_SETTINGS("settings/wake", "Wake word", null, false),
     VOICE_SETTINGS("settings/voice", "Voice", null, false),
-    NOTIFICATION_SETTINGS("settings/notifications", "Notification access", null, false);
+    NOTIFICATION_SETTINGS("settings/notifications", "Notification access", null, false),
+    KEEP_READY("settings/keep-ready", "Keep Ani Ready", null, false);
 
     companion object {
         val bottomBar: List<AniDestination> = entries.filter { it.inBottomBar }

@@ -12,7 +12,10 @@ import com.ani.assistant.data.conversation.ConversationEntry
 import com.ani.assistant.data.memory.MemoryCategory
 import com.ani.assistant.data.memory.MemoryEntry
 import com.ani.assistant.data.settings.AniSettings
+import com.ani.assistant.voice.ServiceState
+import com.ani.assistant.voice.VoiceServiceStatus
 import com.ani.assistant.voice.VoiceState
+import com.ani.assistant.voice.wake.VoskModelState
 import com.ani.nlu.command.CustomAction
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -71,6 +74,12 @@ class AniViewModel(private val graph: AppGraph) : ViewModel() {
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), 0)
 
+    /** Wake-model install state, so Settings can offer the one-time download. */
+    val wakeModelState: StateFlow<VoskModelState> = graph.voskModelStore.state
+        .stateIn(viewModelScope, SharingStarted.Eagerly, VoskModelState.NotInstalled)
+
+    val serviceStatus: StateFlow<VoiceServiceStatus> = ServiceState.status
+
     private val _permissions = MutableStateFlow<Map<AniPermission, PermissionStatus>>(emptyMap())
     val permissions: StateFlow<Map<AniPermission, PermissionStatus>> = _permissions.asStateFlow()
 
@@ -116,6 +125,22 @@ class AniViewModel(private val graph: AppGraph) : ViewModel() {
     fun refreshPermissions() {
         graph.permissionManager.refresh()
         _permissions.value = graph.permissionManager.statuses.value
+        graph.voskModelStore.refreshState()
+    }
+
+    /**
+     * Downloads the on-device wake model.
+     *
+     * One ~40 MB fetch, after which the wake word works with no network at all. Kept as an
+     * explicit user action rather than something the app does on first launch: a 40 MB
+     * download nobody asked for is not a good first impression.
+     */
+    fun downloadWakeModel() {
+        viewModelScope.launch { graph.voskModelStore.download() }
+    }
+
+    fun removeWakeModel() {
+        graph.voskModelStore.remove()
     }
 
     fun updateSettings(transform: (AniSettings) -> AniSettings) {

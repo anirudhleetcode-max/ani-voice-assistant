@@ -12,11 +12,14 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BatteryAlert
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -26,6 +29,9 @@ import androidx.compose.ui.unit.dp
 import com.ani.assistant.data.settings.AiProviderChoice
 import com.ani.assistant.data.settings.AniSettings
 import com.ani.assistant.data.settings.ThemePreference
+import com.ani.assistant.voice.wake.VoskModelState
+import com.ani.assistant.voice.wake.WakeSensitivity
+import com.ani.assistant.voice.wake.WakeWordEngineId
 import com.ani.assistant.ui.components.NavigationRow
 import com.ani.assistant.ui.components.SectionHeader
 import com.ani.assistant.ui.components.SettingsGroup
@@ -45,10 +51,17 @@ fun SettingsScreen(
     settings: AniSettings,
     appVersion: String,
     wakeWordCostNote: String,
+    /** Engines the device can offer, with the note shown under the picker. */
+    wakeEngineOptions: List<Pair<WakeWordEngineId, String>>,
+    wakeEngineNote: String,
+    wakeModelState: VoskModelState,
+    onDownloadWakeModel: () -> Unit,
+    onRemoveWakeModel: () -> Unit,
     onUpdate: ((AniSettings) -> AniSettings) -> Unit,
     onOpenPrivacy: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenKeepReady: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -82,15 +95,45 @@ fun SettingsScreen(
                 checked = settings.wakeWordEnabled,
                 onCheckedChange = { onUpdate { current -> current.copy(wakeWordEnabled = it) } }
             )
-            SliderRow(
+            ChipRow(
+                label = "Wake engine",
+                options = wakeEngineOptions,
+                selected = settings.wakeEngine,
+                onSelect = { onUpdate { current -> current.copy(wakeEngine = it) } }
+            )
+            Text(
+                text = wakeEngineNote,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+            )
+            WakeModelRow(
+                state = wakeModelState,
+                onDownload = onDownloadWakeModel,
+                onRemove = onRemoveWakeModel
+            )
+            ChipRow(
                 label = "Wake sensitivity",
-                value = settings.wakeSensitivity,
-                valueLabel = when {
-                    settings.wakeSensitivity < 0.4f -> "Strict — exact match only"
-                    settings.wakeSensitivity < 0.75f -> "Balanced"
-                    else -> "Forgiving — may wake by mistake"
+                options = listOf(
+                    WakeSensitivity.LOW to "Low",
+                    WakeSensitivity.MEDIUM to "Medium",
+                    WakeSensitivity.HIGH to "High"
+                ),
+                selected = settings.wakeSensitivity,
+                onSelect = { onUpdate { current -> current.copy(wakeSensitivity = it) } }
+            )
+            Text(
+                text = when (settings.wakeSensitivity) {
+                    WakeSensitivity.LOW ->
+                        "Only an exact match, and only once you stop speaking. Fewest false wakes."
+                    WakeSensitivity.MEDIUM -> "The default."
+                    WakeSensitivity.HIGH ->
+                        "Wakes more reliably — and more often by mistake. \"Rey\" is a common " +
+                            "word in Telugu, so expect some."
                 },
-                onValueChange = { onUpdate { current -> current.copy(wakeSensitivity = it) } }
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
             )
             SwitchRow(
                 title = "Play a sound when Ani wakes",
@@ -174,6 +217,12 @@ fun SettingsScreen(
         SectionHeader("Integrations")
         SettingsGroup {
             NavigationRow(
+                title = "Keep Ani Ready",
+                subtitle = "Background and battery settings the wake word needs",
+                icon = Icons.Rounded.BatteryAlert,
+                onClick = onOpenKeepReady
+            )
+            NavigationRow(
                 title = "Notification access",
                 subtitle = "Which apps Ani may read messages from",
                 icon = Icons.Rounded.Notifications,
@@ -248,6 +297,46 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 20.dp)
         )
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+/**
+ * The one-time wake-model download.
+ *
+ * Shown even when another engine is selected, because the on-device engine is the
+ * recommended one and this is the only thing standing between the user and it.
+ */
+@Composable
+private fun WakeModelRow(
+    state: VoskModelState,
+    onDownload: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+        Text(text = "On-device wake model", style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = when (state) {
+                is VoskModelState.Ready ->
+                    "Installed. The wake word works with no internet."
+                VoskModelState.NotInstalled ->
+                    "Not installed. One download of about 40 MB, then it works offline forever."
+                is VoskModelState.Installing -> "Installing… ${state.percent}%"
+                is VoskModelState.Failed -> state.reason
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (state is VoskModelState.Failed) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+        when (state) {
+            is VoskModelState.Ready -> OutlinedButton(onClick = onRemove) { Text("Remove model") }
+            is VoskModelState.Installing -> Unit
+            else -> Button(onClick = onDownload) { Text("Download model") }
+        }
     }
 }
 

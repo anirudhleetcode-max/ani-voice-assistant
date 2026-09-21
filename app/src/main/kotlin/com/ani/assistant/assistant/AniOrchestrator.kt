@@ -222,7 +222,7 @@ class AniOrchestrator(
         val signature = buildString {
             append(settings.effectiveWakePhrases().joinToString("|"))
             append('#')
-            append(settings.wakeSensitivity)
+            append(settings.wakeSensitivity.name)
             append('#')
             append(commandRepository.commands.first().joinToString("|") { it.id + it.phrase + it.enabled })
         }
@@ -234,7 +234,7 @@ class AniOrchestrator(
         val classifier = IntentClassifier(
             wakeMatcher = WakeWordMatcher(
                 phrases = settings.effectiveWakePhrases(),
-                sensitivity = settings.wakeSensitivity.toDouble()
+                sensitivity = settings.wakeSensitivity.matcherSensitivity
             ),
             customCommands = matcher
         )

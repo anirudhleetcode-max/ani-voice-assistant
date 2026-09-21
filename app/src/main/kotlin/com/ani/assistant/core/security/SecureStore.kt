@@ -66,6 +66,14 @@ class SecureStore(context: Context) {
         /** Opaque per-install id the backend uses for rate limiting. Not a user identifier. */
         const val KEY_INSTALL_ID = "install_id"
 
+        /**
+         * Picovoice AccessKey, if the user opted into the Porcupine wake engine.
+         *
+         * Lives here and nowhere else: not in BuildConfig, not in gradle.properties, not
+         * in the repository. It is the user's licence, not the app's.
+         */
+        const val KEY_PICOVOICE_ACCESS_KEY = "picovoice_access_key"
+
         /** Spotify OAuth token, only present if the user connected Spotify. */
         const val KEY_SPOTIFY_TOKEN = "spotify_token"
         const val KEY_SPOTIFY_REFRESH = "spotify_refresh"
