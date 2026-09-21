@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the values the platform needs before Compose takes over. -->
+    <color name="ani_surface_light">#FFF7F6FB</color>
+    <color name="ani_surface_dark">#FF0E0D13</color>
+</resources>

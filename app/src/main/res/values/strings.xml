@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ani</string>
+    <string name="notification_listener_label">Ani — read my notifications</string>
+
+    <!-- Foreground service notification. Android shows this whenever Ani can hear. -->
+    <string name="listening_channel_name">Listening</string>
+    <string name="listening_channel_description">Shown whenever Ani is listening for your wake phrase.</string>
+    <string name="listening_notification_title">Ani is listening for \"%1$s\"</string>
+    <string name="listening_notification_text">Tap to open. Swipe to stop listening.</string>
+    <string name="listening_notification_stop">Stop listening</string>
+
+    <string name="reminder_channel_name">Reminders</string>
+    <string name="reminder_channel_description">Reminders you asked Ani to set.</string>
+
+    <string name="content_description_voice_orb">Tap to talk to Ani</string>
+</resources>

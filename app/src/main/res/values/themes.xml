@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      A deliberately bare platform theme. All real styling lives in Compose
+      (ui/theme/Theme.kt); this exists so the window background matches the app during
+      the split-second before the first frame, instead of flashing white.
+    -->
+    <style name="Theme.Ani" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ani_surface_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">true</item>
+    </style>
+</resources>

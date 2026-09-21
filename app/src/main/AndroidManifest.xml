@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Every permission here is requested at the point of use, not up front, and every one
+      of them maps to a feature the user can switch off in Settings > Privacy Center.
+      Nothing is declared "just in case".
+    -->
+
+    <!-- Listening. Required for the wake phrase and for every spoken command. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Foreground service, so the listening state is always visible in the shade.
+         Android 14+ additionally requires the typed permission. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Resolving "Amma ki call chey" to a number. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- Placing the call directly. Without it Ani falls back to ACTION_DIAL, which
+         still works but needs one tap. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
+    <!-- Android 13+ requires this before any notification can be posted, including the
+         foreground-service notification. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Alarms and reminders. USE_EXACT_ALARM is granted at install for an app whose
+         core purpose is alarms; SCHEDULE_EXACT_ALARM is the older, user-grantable form. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SET_ALARM" />
+
+    <!-- Toggling Do Not Disturb. This only declares intent; the user must still grant
+         notification-policy access from Settings. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
+    <!-- Talking to the AI backend. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Only needed for "location share chey"; declared optional and requested on use. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <uses-feature
+        android:name="android.hardware.camera.flash"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="true" />
+
+    <!--
+      Package visibility. QUERY_ALL_PACKAGES is deliberately NOT declared: Play restricts
+      it to apps whose core function requires a full inventory, and Ani's does not. These
+      queries are enough to launch apps by intent and to resolve the handful of apps the
+      assistant integrates with by name.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <package android:name="com.spotify.music" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.google.android.apps.maps" />
+    </queries>
+
+    <application
+        android:name=".AniApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.Ani"
+        tools:targetApi="34">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Ani">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Lets the user set Ani as the device assistant, which is how a long-press
+                 of the home gesture or a Bluetooth button can reach it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The listening service. foregroundServiceType="microphone" is mandatory from
+          Android 14 for any service that records audio, and it is what makes the
+          persistent "Ani is listening" notification honest rather than decorative.
+        -->
+        <service
+            android:name=".voice.AniVoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!--
+          Reading notifications aloud. This is NOT a runtime permission: the user has to
+          enable Ani in Settings > Notification access, and onboarding takes them there.
+        -->
+        <service
+            android:name=".notifications.AniNotificationListenerService"
+            android:exported="true"
+            android:label="@string/notification_listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".platform.alarm.ReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".platform.alarm.BootReceiver"
+            android:exported="false"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
