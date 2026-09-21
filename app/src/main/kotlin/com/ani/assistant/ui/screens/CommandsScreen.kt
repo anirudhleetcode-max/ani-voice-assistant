@@ -308,4 +308,11 @@ private fun CommandBuilderDialog(
     )
 }
 
-private fun IntentType.readable(): String = name.lowercase().replace('_', ' ')
+/**
+ * Turns a stored step's intent name into something readable.
+ *
+ * Operates on the stored [String] rather than a parsed [IntentType] so that a step saved
+ * by a newer version still shows up in the list. Dropping it from the summary would make
+ * the card silently disagree with what the command actually contains.
+ */
+private fun String.readable(): String = lowercase().replace('_', ' ')

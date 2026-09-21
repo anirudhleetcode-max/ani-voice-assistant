@@ -20,11 +20,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Notifications
-import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -259,7 +259,7 @@ private fun TextCommandField(
         keyboardActions = KeyboardActions(onSend = { onSubmit() }),
         trailingIcon = {
             IconButton(onClick = onSubmit, enabled = value.isNotBlank()) {
-                Icon(Icons.Rounded.Send, contentDescription = "Send")
+                Icon(Icons.AutoMirrored.Rounded.Send, contentDescription = "Send")
             }
         }
     )
