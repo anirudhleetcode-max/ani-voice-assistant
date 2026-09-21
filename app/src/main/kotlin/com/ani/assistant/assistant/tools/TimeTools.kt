@@ -11,7 +11,6 @@ import com.ani.nlu.intent.IntentType
 import com.ani.nlu.intent.ParsedCommand
 import com.ani.nlu.intent.SlotKey
 import com.ani.nlu.response.Responses
-import com.ani.nlu.response.TimePhrasing
 import com.ani.nlu.time.TimeKind
 import java.time.Clock
 import java.time.LocalDateTime
@@ -26,10 +25,7 @@ import java.util.Locale
  * *conversational* decision: "repu 7 ki" is a perfectly well-formed time, it just has two
  * readings, and the right response is a question rather than a coin flip.
  */
-class AlarmTool(
-    private val alarms: AlarmLauncher,
-    private val clock: Clock = Clock.systemDefaultZone()
-) : AniTool {
+class AlarmTool(private val alarms: AlarmLauncher) : AniTool {
 
     override val id: String = "alarm"
     override val handles: Set<IntentType> = setOf(IntentType.SET_ALARM, IntentType.SET_TIMER)

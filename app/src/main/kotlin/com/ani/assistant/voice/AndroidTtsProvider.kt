@@ -43,7 +43,9 @@ class AndroidTtsProvider(context: Context) : TtsProvider {
                 utteranceId?.let { pending.remove(it)?.complete(true) }
             }
 
-            @Deprecated("Superseded by onError(String, Int)", ReplaceWith(""))
+            // Abstract in the base class and deprecated since API 21; the typed
+            // overload below is what actually fires on modern platforms.
+            @Suppress("OVERRIDE_DEPRECATION")
             override fun onError(utteranceId: String?) {
                 utteranceId?.let { pending.remove(it)?.complete(false) }
             }

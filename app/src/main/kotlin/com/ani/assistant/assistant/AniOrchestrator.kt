@@ -6,7 +6,6 @@ import com.ani.assistant.data.commands.CustomCommandRepository
 import com.ani.assistant.data.conversation.ConversationRepository
 import com.ani.assistant.data.settings.AniSettings
 import com.ani.assistant.data.settings.SettingsRepository
-import com.ani.nlu.command.CustomCommandMatcher
 import com.ani.nlu.dialog.ConfirmationPolicy
 import com.ani.nlu.dialog.ConversationContext
 import com.ani.nlu.dialog.WakeWordMatcher
@@ -14,7 +13,6 @@ import com.ani.nlu.intent.IntentClassifier
 import com.ani.nlu.intent.IntentType
 import com.ani.nlu.intent.ParsedCommand
 import com.ani.nlu.intent.SlotKey
-import com.ani.nlu.lexicon.LanguageDetector
 import com.ani.nlu.response.ResponseStyle
 import com.ani.nlu.response.Responses
 import kotlinx.coroutines.flow.first

@@ -34,6 +34,7 @@ import com.ani.assistant.data.conversation.ConversationRepository
 import com.ani.assistant.data.memory.MemoryRepository
 import com.ani.assistant.data.notifications.NotificationRepository
 import com.ani.assistant.data.settings.AiProviderChoice
+import com.ani.assistant.data.settings.AniSettings
 import com.ani.assistant.data.settings.SettingsRepository
 import com.ani.assistant.platform.alarm.AlarmLauncher
 import com.ani.assistant.platform.alarm.ReminderScheduler
@@ -55,8 +56,9 @@ import com.ani.nlu.text.Language
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import java.util.UUID
 
 /**
@@ -89,6 +91,21 @@ class AppGraph(private val context: Context) {
     // ---- Data ------------------------------------------------------------------------
 
     val settingsRepository: SettingsRepository by lazy { SettingsRepository(context) }
+
+    /**
+     * The current settings, readable without suspending.
+     *
+     * The wake-word loop needs the phrases on every iteration and runs on the main
+     * dispatcher; blocking there to read DataStore would be an ANR. A hot [StateFlow]
+     * keeps a snapshot in memory that any thread can read for free.
+     */
+    val settingsState: StateFlow<AniSettings> by lazy {
+        settingsRepository.settings.stateIn(
+            scope = applicationScope,
+            started = SharingStarted.Eagerly,
+            initialValue = AniSettings.DEFAULT
+        )
+    }
     val conversationRepository: ConversationRepository by lazy { ConversationRepository(context) }
     val memoryRepository: MemoryRepository by lazy { MemoryRepository(context) }
     val commandRepository: CustomCommandRepository by lazy { CustomCommandRepository(context) }
@@ -117,17 +134,13 @@ class AppGraph(private val context: Context) {
         SpeechWakeWordDetector(
             recognizer = speechRecognizer,
             matcherProvider = {
-                // Read synchronously: the wake loop needs the current phrases on every
-                // iteration, and DataStore caches the value in memory after first read.
-                val settings = runBlocking { settingsRepository.settings.first() }
+                val settings = settingsState.value
                 WakeWordMatcher(
                     phrases = settings.effectiveWakePhrases(),
                     sensitivity = settings.wakeSensitivity.toDouble()
                 )
             },
-            languageProvider = {
-                runBlocking { settingsRepository.settings.first() }.language ?: Language.MIXED
-            }
+            languageProvider = { settingsState.value.language ?: Language.MIXED }
         )
     }
 
@@ -151,14 +164,12 @@ class AppGraph(private val context: Context) {
     }
 
     private val offlineAiProvider: AiProvider by lazy {
-        OfflineAiProvider {
-            runBlocking { settingsRepository.settings.first() }.responseStyle(Language.MIXED)
-        }
+        OfflineAiProvider { settingsState.value.responseStyle(Language.MIXED) }
     }
 
     /** Picks the provider the user configured, falling back to offline when unusable. */
     suspend fun aiProvider(): AiProvider {
-        val settings = settingsRepository.settings.first()
+        val settings = settingsState.value
         if (settings.aiProvider == AiProviderChoice.OFFLINE_ONLY) return offlineAiProvider
 
         val url = settings.backendUrlOverride?.takeIf { it.isNotBlank() }
