@@ -8,14 +8,16 @@ import com.ani.nlu.intent.SlotKey
 data class PendingConfirmation(
     val command: ParsedCommand,
     /** What Ani asked, so it can be repeated if the user says "enti?". */
-    val prompt: String
+    val prompt: String,
+    val askedAtEpochMillis: Long = System.currentTimeMillis()
 )
 
 /** A slot Ani asked a direct question about ("Em message?"). */
 data class PendingSlotRequest(
     val command: ParsedCommand,
     val slot: SlotKey,
-    val prompt: String
+    val prompt: String,
+    val askedAtEpochMillis: Long = System.currentTimeMillis()
 )
 
 /**
@@ -51,11 +53,24 @@ data class ConversationContext(
 
     val isAwaitingAnswer: Boolean get() = pendingConfirmation != null || pendingSlot != null
 
-    fun awaitingConfirmation(command: ParsedCommand, prompt: String): ConversationContext =
-        copy(pendingConfirmation = PendingConfirmation(command, prompt), pendingSlot = null)
+    fun awaitingConfirmation(
+        command: ParsedCommand,
+        prompt: String,
+        nowMillis: Long = System.currentTimeMillis()
+    ): ConversationContext = copy(
+        pendingConfirmation = PendingConfirmation(command, prompt, nowMillis),
+        pendingSlot = null
+    )
 
-    fun awaitingSlot(command: ParsedCommand, slot: SlotKey, prompt: String): ConversationContext =
-        copy(pendingSlot = PendingSlotRequest(command, slot, prompt), pendingConfirmation = null)
+    fun awaitingSlot(
+        command: ParsedCommand,
+        slot: SlotKey,
+        prompt: String,
+        nowMillis: Long = System.currentTimeMillis()
+    ): ConversationContext = copy(
+        pendingSlot = PendingSlotRequest(command, slot, prompt, nowMillis),
+        pendingConfirmation = null
+    )
 
     fun cleared(): ConversationContext = copy(pendingConfirmation = null, pendingSlot = null)
 
@@ -87,5 +102,15 @@ data class ConversationContext(
 
         /** How many follow-up turns stay in the same conversation before context expires. */
         const val FOLLOW_UP_WINDOW_TURNS = 6
+
+        /**
+         * How long a pending question stays answerable.
+         *
+         * A stale "avunu" is dangerous: without expiry, an approval left hanging from ten
+         * minutes ago could place a call the moment the word is overheard. Two minutes is
+         * long enough for a real pause and short enough that nobody confirms something
+         * they have forgotten asking for.
+         */
+        const val PENDING_TIMEOUT_MILLIS = 120_000L
     }
 }

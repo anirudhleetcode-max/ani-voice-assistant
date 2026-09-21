@@ -3,6 +3,7 @@ package com.ani.assistant.assistant.tools
 import com.ani.assistant.assistant.AniTool
 import com.ani.assistant.assistant.ToolContext
 import com.ani.assistant.core.permission.AniPermission
+import com.ani.assistant.core.log.AniLog
 import com.ani.assistant.core.permission.PermissionManager
 import com.ani.assistant.core.result.AniResult
 import com.ani.assistant.data.memory.MemoryCategory
@@ -65,20 +66,23 @@ class CallContactTool(
                 SlotKey.CONTACT_NAME.name
             )
 
-            is ContactLookup.Single -> placeCall(lookup.contact, spokenName, context)
+            is ContactLookup.Single -> placeCall(lookup.contact, spokenName, command, context)
         }
     }
 
     private fun placeCall(
         contact: ResolvedContact,
         spokenName: String,
+        command: ParsedCommand,
         context: ToolContext
     ): AniResult {
         val number = contact.preferredNumber()
             ?: return AniResult.Failure(Responses.contactNotFound(spokenName, context.style))
 
-        // More than one number is a real fork in the road, so ask rather than assume.
-        if (!contact.hasSingleNumber) {
+        // More than one number is a real fork in the road, so ask rather than assume —
+        // but only once. Without the `confirmed` check this branch is re-entered after
+        // the user says yes, asks the identical question, and loops forever.
+        if (!contact.hasSingleNumber && !command.confirmed) {
             return AniResult.NeedsConfirmation(
                 Responses.multipleNumbers(
                     name = contact.displayName,
@@ -90,7 +94,15 @@ class CallContactTool(
         }
 
         val canPlaceCalls = permissions.isGranted(AniPermission.PHONE)
-        return when (launcher.call(number.number, canPlaceCalls)) {
+        AniLog.i(
+            TAG,
+            "ACTION CALL_CONTACT execution started",
+            "contact" to AniLog.redact(contact.displayName),
+            "numberResolved" to true,
+            "confirmed" to command.confirmed,
+            "canPlaceCalls" to canPlaceCalls
+        )
+        return when (val outcome = launcher.call(number.number, canPlaceCalls, contact.displayName)) {
             CallOutcome.Placing -> AniResult.Success(
                 Responses.callingContact(contact.displayName, context.style)
             )
@@ -105,8 +117,25 @@ class CallContactTool(
                 Responses.somethingWentWrong(context.style)
             )
 
-            CallOutcome.Failed -> AniResult.Failure(Responses.somethingWentWrong(context.style))
+            // Android refused a background activity start. The call is one tap away
+            // behind a notification, and saying so is the only honest option — this is
+            // exactly the case that used to be reported as "calling".
+            is CallOutcome.Deferred -> AniResult.Limitation(
+                spokenResponse = if (context.style.speaksTelugu) {
+                    "${contact.displayName} ki call ready chesa${context.style.particle}. " +
+                        "Notification touch chesthe call avtundi."
+                } else {
+                    "I've queued the call to ${contact.displayName} — tap the notification to connect."
+                },
+                fallbackTaken = "deferred to a notification"
+            )
+
+            is CallOutcome.Failed -> AniResult.Failure(Responses.somethingWentWrong(context.style))
         }
+    }
+
+    private companion object {
+        const val TAG = "AniCallTool"
     }
 
     private fun dialHint(context: ToolContext) = if (context.style.speaksTelugu) {

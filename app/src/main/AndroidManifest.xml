@@ -49,6 +49,15 @@
     -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!--
+      Lets an action prepared in the background surface over a locked screen, which is the
+      only route Android leaves open once background activity starts are blocked. Android
+      14 reserves full-screen intents for calling and alarm apps and downgrades everything
+      else to a heads-up notification; the app checks canUseFullScreenIntent() and reports
+      which of the two it actually got.
+    -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Only needed for "location share chey"; declared optional and requested on use. -->

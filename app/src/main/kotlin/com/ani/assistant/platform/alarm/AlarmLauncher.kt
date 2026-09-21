@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.provider.AlarmClock
 import com.ani.assistant.core.log.AniLog
+import com.ani.assistant.platform.launch.ActivityLauncher
+import com.ani.assistant.platform.launch.LaunchOutcome
 import com.ani.nlu.time.TimeSpec
 
 /**
@@ -18,7 +20,10 @@ import com.ani.nlu.time.TimeSpec
  * `EXTRA_SKIP_UI` asks the clock app to set it silently. Most honour it; some show their
  * own confirmation screen, which is their prerogative and not a failure.
  */
-class AlarmLauncher(private val context: Context) {
+class AlarmLauncher(
+    private val context: Context,
+    private val launcher: ActivityLauncher
+) {
 
     /** @return true when a clock app accepted the alarm. */
     fun setAlarm(spec: TimeSpec, label: String): Boolean {
@@ -54,19 +59,18 @@ class AlarmLauncher(private val context: Context) {
         "alarm list"
     )
 
-    private fun launch(intent: Intent, what: String): Boolean {
-        if (intent.resolveActivity(context.packageManager) == null) {
-            AniLog.w(TAG, "no app handles this intent", "what" to what)
-            return false
+    private fun launch(intent: Intent, what: String): Boolean =
+        when (launcher.launch(intent, "Set $what")) {
+            LaunchOutcome.Launched, is LaunchOutcome.Deferred -> true
+            LaunchOutcome.NoHandler -> {
+                AniLog.w(TAG, "no app handles this intent", "what" to what)
+                false
+            }
+            is LaunchOutcome.Failed -> {
+                AniLog.w(TAG, "clock app refused", "what" to what)
+                false
+            }
         }
-        return try {
-            context.startActivity(intent)
-            true
-        } catch (error: Exception) {
-            AniLog.e(TAG, "could not start clock app", error, "what" to what)
-            false
-        }
-    }
 
     private companion object {
         const val TAG = "AniAlarm"

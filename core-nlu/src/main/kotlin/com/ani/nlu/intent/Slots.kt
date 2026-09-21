@@ -76,6 +76,17 @@ data class ParsedCommand(
     val originalText: String = "",
     /** Slots the intent needs before it can run, but which the user did not supply. */
     val needsSlots: List<SlotKey> = emptyList(),
+    /**
+     * True once the user has approved this exact action.
+     *
+     * Without this the confirmation gate has no memory. It re-evaluates the same command
+     * after the user says "avunu", reaches the same verdict — of course it does, nothing
+     * about the command changed — and asks again, forever. The action never runs.
+     *
+     * Set only by the classifier when it resolves a pending confirmation, and read by the
+     * orchestrator and by tools that do their own disambiguation.
+     */
+    val confirmed: Boolean = false,
     /** Ranked runners-up, kept for diagnostics and for the AI fallback to consider. */
     val alternatives: List<ScoredIntent> = emptyList()
 ) {

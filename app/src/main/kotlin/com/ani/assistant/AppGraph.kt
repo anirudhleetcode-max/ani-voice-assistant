@@ -43,9 +43,12 @@ import com.ani.assistant.platform.contacts.ContactResolver
 import com.ani.assistant.platform.device.BackgroundRestrictions
 import com.ani.assistant.platform.device.DeviceController
 import com.ani.assistant.platform.device.SystemSettingsLauncher
+import com.ani.assistant.platform.launch.ActivityLauncher
+import com.ani.assistant.platform.launch.ForegroundState
 import com.ani.assistant.platform.music.MusicController
 import com.ani.assistant.platform.share.CommunicationLauncher
 import com.ani.assistant.voice.AndroidSpeechRecognizerProvider
+import com.ani.assistant.voice.audio.WakeAudioDiagnostics
 import com.ani.assistant.voice.AndroidTtsProvider
 import com.ani.assistant.voice.SpeechRecognizerProvider
 import com.ani.assistant.voice.TtsProvider
@@ -117,14 +120,29 @@ class AppGraph(private val context: Context) {
 
     // ---- Platform --------------------------------------------------------------------
 
+    /**
+     * Tracks whether an Ani activity is resumed.
+     *
+     * Registered by [com.ani.assistant.AniApplication]. Everything that starts an activity
+     * consults it, because Android silently drops background activity starts and the only
+     * way to tell is to know which side of that line you are on.
+     */
+    val foregroundState: ForegroundState by lazy { ForegroundState() }
+
+    val activityLauncher: ActivityLauncher by lazy { ActivityLauncher(context, foregroundState) }
+
     val contactResolver: ContactResolver by lazy { ContactResolver(context) }
-    val appResolver: AppResolver by lazy { AppResolver(context) }
+    val appResolver: AppResolver by lazy { AppResolver(context, activityLauncher) }
     val deviceController: DeviceController by lazy { DeviceController(context) }
-    val settingsLauncher: SystemSettingsLauncher by lazy { SystemSettingsLauncher(context) }
+    val settingsLauncher: SystemSettingsLauncher by lazy {
+        SystemSettingsLauncher(context, activityLauncher)
+    }
     val backgroundRestrictions: BackgroundRestrictions by lazy { BackgroundRestrictions(context) }
-    val communicationLauncher: CommunicationLauncher by lazy { CommunicationLauncher(context) }
-    val musicController: MusicController by lazy { MusicController(context) }
-    val alarmLauncher: AlarmLauncher by lazy { AlarmLauncher(context) }
+    val communicationLauncher: CommunicationLauncher by lazy {
+        CommunicationLauncher(context, activityLauncher)
+    }
+    val musicController: MusicController by lazy { MusicController(context, activityLauncher) }
+    val alarmLauncher: AlarmLauncher by lazy { AlarmLauncher(context, activityLauncher) }
     val reminderScheduler: ReminderScheduler by lazy { ReminderScheduler(context) }
 
     // ---- Voice -----------------------------------------------------------------------
@@ -137,6 +155,15 @@ class AppGraph(private val context: Context) {
 
     val voskModelStore: VoskModelStore by lazy { VoskModelStore(context) }
 
+    /**
+     * Live wake-audio statistics.
+     *
+     * Transcripts are retained only in debug builds; see [WakeAudioDiagnostics].
+     */
+    val wakeAudioDiagnostics: WakeAudioDiagnostics by lazy {
+        WakeAudioDiagnostics(retainTranscripts = BuildConfig.DEBUG)
+    }
+
     private val wakePhrases: () -> List<String> = { settingsState.value.effectiveWakePhrases() }
     private val wakeSensitivity: () -> WakeSensitivity = { settingsState.value.wakeSensitivity }
     private val micGranted: () -> Boolean = { permissionManager.isGranted(AniPermission.MICROPHONE) }
@@ -146,7 +173,8 @@ class AppGraph(private val context: Context) {
             modelStore = voskModelStore,
             phrasesProvider = wakePhrases,
             sensitivityProvider = wakeSensitivity,
-            hasMicrophonePermission = micGranted
+            hasMicrophonePermission = micGranted,
+            diagnostics = wakeAudioDiagnostics
         )
     }
 

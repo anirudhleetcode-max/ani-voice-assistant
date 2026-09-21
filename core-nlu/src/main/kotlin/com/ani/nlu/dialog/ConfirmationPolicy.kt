@@ -36,6 +36,9 @@ object ConfirmationPolicy {
         command: ParsedCommand,
         level: ConfirmationLevel = ConfirmationLevel.BALANCED
     ): Boolean {
+        // The user already said yes to this exact action. Asking again is the bug this
+        // flag exists to prevent.
+        if (command.confirmed) return false
         if (!command.type.isDeviceAction) return false
         if (!command.isComplete) return false // still gathering slots; ask for those first
         if (command.type == IntentType.CUSTOM_COMMAND) return false // approved when saved

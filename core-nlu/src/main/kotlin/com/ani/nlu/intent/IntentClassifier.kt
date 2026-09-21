@@ -2,6 +2,8 @@ package com.ani.nlu.intent
 
 import com.ani.nlu.command.CustomCommandMatcher
 import com.ani.nlu.dialog.ConversationContext
+import com.ani.nlu.dialog.PendingConfirmation
+import com.ani.nlu.dialog.PendingSlotRequest
 import com.ani.nlu.dialog.WakeWordMatcher
 import com.ani.nlu.lexicon.LanguageDetector
 import com.ani.nlu.lexicon.Lexicon
@@ -32,7 +34,9 @@ import com.ani.nlu.time.TimeSpec
  */
 class IntentClassifier(
     private val wakeMatcher: WakeWordMatcher = WakeWordMatcher(),
-    private val customCommands: CustomCommandMatcher = CustomCommandMatcher.empty()
+    private val customCommands: CustomCommandMatcher = CustomCommandMatcher.empty(),
+    /** Injectable so pending-question expiry can be tested without waiting two minutes. */
+    private val nowMillis: () -> Long = System::currentTimeMillis
 ) {
 
     fun classify(raw: String, context: ConversationContext = ConversationContext.EMPTY): ParsedCommand {
@@ -102,7 +106,7 @@ class IntentClassifier(
         language: Language,
         context: ConversationContext
     ): ParsedCommand? {
-        val pendingSlot = context.pendingSlot
+        val pendingSlot = context.pendingSlot?.takeIf { !it.hasExpired() }
         if (pendingSlot != null) {
             if (isDenial(body)) {
                 return ParsedCommand(
@@ -126,10 +130,14 @@ class IntentClassifier(
             }
         }
 
-        val pendingConfirmation = context.pendingConfirmation
+        val pendingConfirmation = context.pendingConfirmation?.takeIf { !it.hasExpired() }
         if (pendingConfirmation != null) {
             if (isAffirmation(body)) {
+                // `confirmed = true` is the whole point. Without it the orchestrator
+                // re-evaluates the same command against the same policy, reaches the same
+                // verdict, and asks again — the action never runs.
                 return pendingConfirmation.command.copy(
+                    confirmed = true,
                     confidence = 0.98,
                     normalizedText = body.normalized,
                     originalText = raw
@@ -148,6 +156,12 @@ class IntentClassifier(
         }
         return null
     }
+
+    private fun PendingConfirmation.hasExpired(): Boolean =
+        nowMillis() - askedAtEpochMillis > ConversationContext.PENDING_TIMEOUT_MILLIS
+
+    private fun PendingSlotRequest.hasExpired(): Boolean =
+        nowMillis() - askedAtEpochMillis > ConversationContext.PENDING_TIMEOUT_MILLIS
 
     private fun valueForSlot(slot: SlotKey, body: NormalizedText): String? = when (slot) {
         SlotKey.MESSAGE_BODY -> SlotExtractors.messageBody(body, isFollowUpAnswer = true)

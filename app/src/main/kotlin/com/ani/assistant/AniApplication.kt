@@ -24,6 +24,10 @@ class AniApplication : Application() {
         graph = AppGraph(this)
         instance = this
 
+        // Everything that launches an external app needs to know whether we are in the
+        // foreground, because Android drops background activity starts without telling us.
+        registerActivityLifecycleCallbacks(graph.foregroundState)
+
         graph.applicationScope.launch {
             try {
                 pruneStoredData()

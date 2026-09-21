@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import com.ani.assistant.core.log.AniLog
+import com.ani.assistant.platform.launch.ActivityLauncher
+import com.ani.assistant.platform.launch.LaunchOutcome
 import com.ani.nlu.intent.KnownApps
 import com.ani.nlu.text.Fuzzy
 import com.ani.nlu.text.PhoneticKey
@@ -30,7 +32,10 @@ data class InstalledApp(
  * so it needs no QUERY_ALL_PACKAGES and sees exactly what the user sees on their home
  * screen.
  */
-class AppResolver(private val context: Context) {
+class AppResolver(
+    private val context: Context,
+    private val launcher: ActivityLauncher
+) {
 
     @Volatile
     private var cache: List<InstalledApp>? = null
@@ -83,10 +88,12 @@ class AppResolver(private val context: Context) {
         context.packageManager.getLaunchIntentForPackage(app.packageName)
             ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    /** Launches a resolved intent. Throws only if the app vanished mid-call. */
-    fun startApp(intent: Intent) {
-        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
+    /**
+     * Launches a resolved intent through [ActivityLauncher], so a background start is
+     * deferred rather than silently dropped.
+     */
+    fun startApp(intent: Intent, label: String): LaunchOutcome =
+        launcher.launch(intent, label)
 
     fun isInstalled(packageName: String): Boolean = try {
         context.packageManager.getPackageInfo(packageName, 0)

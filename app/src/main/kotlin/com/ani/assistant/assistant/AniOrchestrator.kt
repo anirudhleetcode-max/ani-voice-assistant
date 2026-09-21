@@ -75,12 +75,19 @@ class AniOrchestrator(
         val style = settings.responseStyle(command.language)
 
         conversationRepository.recordUser(utterance, settings.storeConversationHistory)
+
+        // Stage trace. Lengths and flags only — never the transcript, the contact or the
+        // message body. This is what makes a device failure diagnosable over adb without
+        // putting the user's speech into logcat.
         AniLog.i(
             TAG,
-            "classified utterance",
+            "[NLU] classified",
             "intent" to command.type.name,
             "confidence" to "%.2f".format(command.confidence),
-            "complete" to command.isComplete
+            "complete" to command.isComplete,
+            "confirmed" to command.confirmed,
+            "transcriptLength" to utterance.length,
+            "answeringPending" to (context.isAwaitingAnswer)
         )
 
         val turn = route(command, settings, style)
@@ -127,8 +134,11 @@ class AniOrchestrator(
             )
         }
 
-        // 2. Consequential actions are confirmed first.
+        // 2. Consequential actions are confirmed first — unless the user already said
+        //    yes, which `confirmed` records. Re-asking an approved command is precisely
+        //    the loop that stopped calls from ever being placed.
         if (ConfirmationPolicy.requiresConfirmation(command, settings.confirmationLevel)) {
+            AniLog.i(TAG, "[CONFIRM] pending action created", "intent" to command.type.name)
             val prompt = confirmationFor(command, style)
             context = context.awaitingConfirmation(command, prompt)
             return AniTurn(
@@ -140,7 +150,19 @@ class AniOrchestrator(
         }
 
         // 3. Do it.
+        AniLog.i(
+            TAG,
+            "[ACTION] execution started",
+            "intent" to command.type.name,
+            "confirmed" to command.confirmed
+        )
         val result = toolRegistry.execute(command, toolContext)
+        AniLog.i(
+            TAG,
+            "[ACTION] result",
+            "intent" to command.type.name,
+            "outcome" to result::class.simpleName
+        )
         return finish(command, result, style)
     }
 

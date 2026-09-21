@@ -8,12 +8,16 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.ani.assistant.voice.audio.GainConfig
+import com.ani.assistant.voice.audio.WakeAudioDiagnostics
+import com.ani.assistant.voice.audio.WakeAudioPipeline
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.vosk.LogLevel
 import org.vosk.LibVosk
 import org.vosk.Model
 import org.vosk.Recognizer
-import org.vosk.android.RecognitionListener
-import org.vosk.android.SpeechService
 
 /**
  * Wake-word detection with Vosk in grammar mode. **The default engine.**
@@ -43,7 +47,10 @@ class VoskWakeWordEngine(
     private val modelStore: VoskModelStore,
     private val phrasesProvider: () -> List<String>,
     private val sensitivityProvider: () -> WakeSensitivity,
-    private val hasMicrophonePermission: () -> Boolean
+    private val hasMicrophonePermission: () -> Boolean,
+    /** Live signal statistics, so quiet speech can be tuned on a real phone. */
+    private val diagnostics: WakeAudioDiagnostics? = null,
+    private val gainConfig: GainConfig = GainConfig()
 ) : WakeWordEngine {
 
     override val id = WakeWordEngineId.VOSK
@@ -55,11 +62,19 @@ class VoskWakeWordEngine(
             "Nothing is uploaded and nothing is recorded. Uses about 40 MB of storage and " +
             "a modest amount of battery."
 
+    /** The capture settings actually negotiated, for Diagnostics. Null while stopped. */
+    val captureDescription: String?
+        get() = pipeline?.config?.describe()
+
     @Volatile
-    private var speechService: SpeechService? = null
+    private var pipeline: WakeAudioPipeline? = null
 
     @Volatile
     private var paused: Boolean = false
+
+    /** Set false to unwind the capture loop from outside it. */
+    @Volatile
+    private var capturing: Boolean = false
 
     /**
      * True when the wake phrase was not in the model's vocabulary and detection fell back
@@ -103,66 +118,86 @@ class VoskWakeWordEngine(
             phrases = phrases,
             sensitivity = sensitivityProvider().matcherSensitivity
         )
-        // At low sensitivity only a completed utterance counts, which all but removes
-        // false wakes at the cost of a beat more latency.
+
+        // Partials are what make a quiet word detectable in reasonable time: the decoder
+        // offers a hypothesis mid-utterance, well before it decides the utterance ended.
+        // At LOW sensitivity they are ignored, trading latency for the fewest false wakes.
         val acceptPartials = sensitivityProvider() != WakeSensitivity.LOW
 
         var model: Model? = null
         var recognizer: Recognizer? = null
-        var service: SpeechService? = null
+        val audio = WakeAudioPipeline(gainConfig = gainConfig, diagnostics = diagnostics)
 
         try {
             model = Model(modelPath)
             recognizer = buildRecognizer(model, phrases)
-            service = SpeechService(recognizer, SAMPLE_RATE)
-            speechService = service
-
-            val listener = object : RecognitionListener {
-                override fun onPartialResult(hypothesis: String?) {
-                    if (!acceptPartials) return
-                    emitIfWake(hypothesis, "partial", matcher) { trySend(it) }
-                }
-
-                override fun onResult(hypothesis: String?) {
-                    emitIfWake(hypothesis, "text", matcher) { trySend(it) }
-                }
-
-                override fun onFinalResult(hypothesis: String?) {
-                    emitIfWake(hypothesis, "text", matcher) { trySend(it) }
-                }
-
-                override fun onError(exception: Exception?) {
-                    AniLog.w(TAG, "vosk error", "type" to (exception?.javaClass?.simpleName ?: "unknown"))
-                }
-
-                override fun onTimeout() = Unit
+            if (audio.open() == null) {
+                error("microphone could not be opened")
             }
-
-            service.startListening(listener)
-            // Respect a pause that was requested before the flow started.
-            service.setPause(paused)
-            AniLog.i(
-                TAG,
-                "wake engine listening",
-                "phrases" to phrases.size,
-                "fullVocabulary" to usingFullVocabulary
-            )
+            pipeline = audio
         } catch (error: Exception) {
             AniLog.e(TAG, "could not start wake engine", error)
-            runCatching { service?.shutdown() }
+            diagnostics?.onCaptureError("The wake engine could not start.")
+            runCatching { audio.close() }
             runCatching { recognizer?.close() }
             runCatching { model?.close() }
-            speechService = null
+            pipeline = null
             close()
             return@callbackFlow
         }
 
+        val activeRecognizer = recognizer
+        capturing = true
+
+        // The read loop blocks, so it gets its own thread rather than stalling a
+        // dispatcher that other work shares.
+        val captureJob = CoroutineScope(Dispatchers.IO).launch {
+            try {
+                audio.captureInto(
+                    isActive = { capturing },
+                    isPaused = { paused }
+                ) { buffer, length ->
+                    // acceptWaveForm returns true when the decoder has settled on an
+                    // utterance; false means a partial hypothesis is available.
+                    val settled = activeRecognizer.acceptWaveForm(buffer, length)
+                    if (settled) {
+                        val text = extractText(activeRecognizer.result, "text")
+                        if (!text.isNullOrBlank()) {
+                            diagnostics?.onFinal(text)
+                            emitIfWake(text, matcher) { trySend(it) }
+                        }
+                    } else if (acceptPartials) {
+                        val partial = extractText(activeRecognizer.partialResult, "partial")
+                        if (!partial.isNullOrBlank()) {
+                            diagnostics?.onPartial(partial)
+                            emitIfWake(partial, matcher) { trySend(it) }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                AniLog.e(TAG, "capture loop failed", error)
+                diagnostics?.onCaptureError("The microphone stopped unexpectedly.")
+            } finally {
+                close()
+            }
+        }
+
+        AniLog.i(
+            TAG,
+            "wake engine listening",
+            "phrases" to phrases.size,
+            "fullVocabulary" to usingFullVocabulary,
+            "partials" to acceptPartials
+        )
+
         awaitClose {
-            speechService = null
-            runCatching { service.stop() }
-            runCatching { service.shutdown() }
-            runCatching { recognizer.close() }
+            capturing = false
+            captureJob.cancel()
+            pipeline = null
+            runCatching { audio.close() }
+            runCatching { activeRecognizer.close() }
             runCatching { model.close() }
+            diagnostics?.onCaptureClosed()
             AniLog.i(TAG, "wake engine stopped")
         }
     }
@@ -199,26 +234,33 @@ class VoskWakeWordEngine(
         return "[$quoted]"
     }
 
+    /**
+     * Emits only when the phrase matcher agrees, which is the false-positive defence.
+     *
+     * Deliberately *not* a substring test. `transcript.contains("rey")` would fire on
+     * "grey", "prey" and on "rey" buried anywhere in a sentence; [WakeWordMatcher]
+     * requires the phrase to lead the utterance and matches it phonetically rather than
+     * literally. Making quiet speech audible is an audio problem, and it is solved in the
+     * audio path — not by loosening this.
+     */
     private inline fun emitIfWake(
-        hypothesis: String?,
-        field: String,
+        text: String,
         matcher: WakeWordMatcher,
         emit: (WakeDetection) -> Unit
     ) {
         if (paused) return
-        val text = extractText(hypothesis, field) ?: return
         if (text.isBlank()) return
 
         val match = matcher.match(text)
         if (!match.matched) return
 
-        emit(
-            WakeDetection(
-                phrase = match.phrase.orEmpty(),
-                confidence = match.confidence,
-                trailingText = match.remainder.normalized.takeIf { it.isNotBlank() }
-            )
+        val detection = WakeDetection(
+            phrase = match.phrase.orEmpty(),
+            confidence = match.confidence,
+            trailingText = match.remainder.normalized.takeIf { it.isNotBlank() }
         )
+        diagnostics?.onDetection(detection.atEpochMillis)
+        emit(detection)
     }
 
     private fun extractText(hypothesis: String?, field: String): String? {
@@ -231,14 +273,21 @@ class VoskWakeWordEngine(
         }.getOrNull()
     }
 
+    /**
+     * Suspends forwarding without giving up the microphone.
+     *
+     * Capture keeps draining so the buffer cannot overflow and the noise estimate stays
+     * current; nothing reaches the decoder. Full microphone release is [release], which is
+     * what the service calls before the command recogniser needs the microphone.
+     */
     override fun setPaused(paused: Boolean) {
         this.paused = paused
-        runCatching { speechService?.setPause(paused) }
     }
 
     override fun release() {
-        runCatching { speechService?.shutdown() }
-        speechService = null
+        capturing = false
+        runCatching { pipeline?.close() }
+        pipeline = null
     }
 
     private companion object {

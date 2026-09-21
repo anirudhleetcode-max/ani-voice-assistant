@@ -12,6 +12,8 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import com.ani.assistant.core.log.AniLog
 import com.ani.assistant.notifications.AniNotificationListenerService
+import com.ani.assistant.platform.launch.ActivityLauncher
+import com.ani.assistant.platform.launch.LaunchOutcome
 import java.net.URLEncoder
 
 /** What is playing right now, when Ani can see it. */
@@ -29,6 +31,16 @@ sealed interface MusicOutcome {
 
     /** A search was opened in the music app. The user still presses play. */
     data class SearchOpened(val appLabel: String, val query: String) : MusicOutcome
+
+    /**
+     * Android blocked a background activity start, so Spotify is waiting behind a
+     * notification rather than on screen.
+     *
+     * This case is why "[song] play chey" appeared to do nothing when spoken to the wake
+     * word: the old code called startActivity from the application context, Android
+     * dropped it silently, and no exception meant the result was reported as success.
+     */
+    data class Deferred(val appLabel: String, val query: String, val asHeadsUp: Boolean) : MusicOutcome
 
     data class AppNotInstalled(val appLabel: String) : MusicOutcome
 
@@ -54,7 +66,10 @@ sealed interface MusicOutcome {
  * personal build. What Ani does instead is open Spotify's search deep link with the query
  * already filled in, and *say that is what it did*. See SPOTIFY_INTEGRATION.md.
  */
-class MusicController(private val context: Context) {
+class MusicController(
+    private val context: Context,
+    private val launcher: ActivityLauncher
+) {
 
     private val audioManager: AudioManager?
         get() = context.getSystemService(AudioManager::class.java)
@@ -176,38 +191,39 @@ class MusicController(private val context: Context) {
         }
 
         for (intent in candidates) {
-            val launchable = intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (launchable.resolveActivity(context.packageManager) == null) continue
-            return try {
-                context.startActivity(launchable)
-                MusicOutcome.SearchOpened(label, query)
-            } catch (error: Exception) {
-                AniLog.w(TAG, "music search failed to open", "provider" to provider)
-                continue
+            when (val outcome = launcher.launch(intent, "Play $query")) {
+                LaunchOutcome.Launched -> return MusicOutcome.SearchOpened(label, query)
+                is LaunchOutcome.Deferred ->
+                    return MusicOutcome.Deferred(label, query, outcome.asHeadsUp)
+                LaunchOutcome.NoHandler -> continue
+                is LaunchOutcome.Failed -> {
+                    AniLog.w(TAG, "music launch failed", "provider" to provider)
+                    continue
+                }
             }
         }
         return MusicOutcome.AppNotInstalled(label)
     }
 
+    /** True when the provider's app is actually installed. */
+    fun isProviderInstalled(provider: String): Boolean =
+        runCatching { context.packageManager.getPackageInfo(packageFor(provider), 0) }.isSuccess
+
     /** Opens the music app itself, with no search. */
     fun openApp(provider: String): Boolean {
-        val packageName = when (provider) {
-            "youtube" -> "com.google.android.youtube"
-            "youtubemusic" -> "com.google.android.apps.youtube.music"
-            "gaana" -> "com.gaana"
-            "wynk" -> "com.bsbportal.music"
-            "jiosaavn" -> "com.jio.media.jiobeats"
-            else -> SPOTIFY_PACKAGE
-        }
-        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = context.packageManager.getLaunchIntentForPackage(packageFor(provider))
             ?: return false
-        return try {
-            context.startActivity(intent)
-            true
-        } catch (error: Exception) {
-            false
-        }
+        return launcher.launch(intent, "Open music")
+            .let { it is LaunchOutcome.Launched || it is LaunchOutcome.Deferred }
+    }
+
+    private fun packageFor(provider: String): String = when (provider) {
+        "youtube" -> "com.google.android.youtube"
+        "youtubemusic" -> "com.google.android.apps.youtube.music"
+        "gaana" -> "com.gaana"
+        "wynk" -> "com.bsbportal.music"
+        "jiosaavn" -> "com.jio.media.jiobeats"
+        else -> SPOTIFY_PACKAGE
     }
 
     private companion object {

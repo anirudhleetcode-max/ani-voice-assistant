@@ -14,5 +14,10 @@
     <string name="reminder_channel_name">Reminders</string>
     <string name="reminder_channel_description">Reminders you asked Ani to set.</string>
 
+    <!-- Shown when Android blocked a background activity start and the action is waiting. -->
+    <string name="launch_channel_name">Actions</string>
+    <string name="launch_channel_description">Actions Ani prepared while running in the background.</string>
+    <string name="launch_deferred_text">Tap to continue</string>
+
     <string name="content_description_voice_orb">Tap to talk to Ani</string>
 </resources>

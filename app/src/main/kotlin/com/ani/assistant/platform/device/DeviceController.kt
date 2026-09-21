@@ -13,6 +13,8 @@ import android.os.Environment
 import android.os.StatFs
 import android.provider.Settings
 import com.ani.assistant.core.log.AniLog
+import com.ani.assistant.platform.launch.ActivityLauncher
+import com.ani.assistant.platform.launch.LaunchOutcome
 import java.text.DecimalFormat
 
 data class BatteryStatus(val percent: Int, val isCharging: Boolean)
@@ -199,21 +201,17 @@ class DeviceController(private val context: Context) {
  * On Android 10+ the Wi-Fi and internet panels open as a bottom sheet over the app, so
  * the user can toggle and come straight back.
  */
-class SystemSettingsLauncher(private val context: Context) {
+class SystemSettingsLauncher(
+    private val context: Context,
+    private val launcher: ActivityLauncher
+) {
 
-    /** @return true when a settings screen was opened. */
+    /** @return true when a settings screen was opened or queued behind a notification. */
     fun open(target: String): Boolean {
-        val intents = intentsFor(target)
-        for (intent in intents) {
-            val launchable = intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (launchable.resolveActivity(context.packageManager) != null) {
-                return try {
-                    context.startActivity(launchable)
-                    true
-                } catch (error: Exception) {
-                    AniLog.w(TAG, "settings screen refused to open", "target" to target)
-                    false
-                }
+        for (intent in intentsFor(target)) {
+            when (launcher.launch(intent, "${labelFor(target)} settings")) {
+                LaunchOutcome.Launched, is LaunchOutcome.Deferred -> return true
+                LaunchOutcome.NoHandler, is LaunchOutcome.Failed -> continue
             }
         }
         AniLog.w(TAG, "no settings screen for target", "target" to target)

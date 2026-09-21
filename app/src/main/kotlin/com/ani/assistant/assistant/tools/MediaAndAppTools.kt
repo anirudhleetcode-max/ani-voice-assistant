@@ -2,11 +2,13 @@ package com.ani.assistant.assistant.tools
 
 import com.ani.assistant.assistant.AniTool
 import com.ani.assistant.assistant.ToolContext
+import com.ani.assistant.core.log.AniLog
 import com.ani.assistant.core.result.AniResult
 import com.ani.assistant.data.memory.MemoryCategory
 import com.ani.assistant.data.memory.MemoryRepository
 import com.ani.assistant.platform.apps.AppResolver
 import com.ani.assistant.platform.music.MusicController
+import com.ani.assistant.platform.launch.LaunchOutcome
 import com.ani.assistant.platform.music.MusicOutcome
 import com.ani.nlu.intent.IntentType
 import com.ani.nlu.intent.ParsedCommand
@@ -25,6 +27,11 @@ class MusicTool(
     private val music: MusicController,
     private val apps: AppResolver
 ) : AniTool {
+
+    private companion object {
+        const val TAG = "AniMusicTool"
+    }
+
 
     override val id: String = "music"
     override val handles: Set<IntentType> = setOf(IntentType.PLAY_MUSIC, IntentType.MUSIC_CONTROL)
@@ -60,10 +67,31 @@ class MusicTool(
 
         val provider = command[SlotKey.MUSIC_PROVIDER] ?: context.settings.preferredMusicApp
 
+        AniLog.i(
+            TAG,
+            "ACTION PLAY_MUSIC execution started",
+            "provider" to provider,
+            "queryLength" to query.length,
+            "providerInstalled" to music.isProviderInstalled(provider)
+        )
+
         return when (val outcome = music.openSearch(query, provider)) {
             is MusicOutcome.SearchOpened -> AniResult.Limitation(
                 spokenResponse = Responses.openedMusicSearch(query, outcome.appLabel, context.style),
                 fallbackTaken = "opened a search"
+            )
+
+            // Android blocked a background activity start. Spotify is behind a
+            // notification rather than on screen, and the reply says that rather than
+            // claiming a search opened.
+            is MusicOutcome.Deferred -> AniResult.Limitation(
+                spokenResponse = if (context.style.speaksTelugu) {
+                    "${outcome.appLabel} lo \"${outcome.query}\" ready chesa${context.style.particle}. " +
+                        "Notification touch chey."
+                } else {
+                    "I've queued \"${outcome.query}\" in ${outcome.appLabel} — tap the notification to open it."
+                },
+                fallbackTaken = "deferred to a notification"
             )
 
             is MusicOutcome.AppNotInstalled -> {
@@ -113,11 +141,24 @@ class AppLauncherTool(
         val intent = apps.launchIntentFor(app)
             ?: return AniResult.Failure(Responses.appNotInstalled(app.label, context.style))
 
-        return try {
-            apps.startApp(intent)
-            AniResult.Success(Responses.openedApp(app.label, context.style))
-        } catch (error: Exception) {
-            AniResult.Failure(Responses.somethingWentWrong(context.style), error)
+        return when (val outcome = apps.startApp(intent, "Open ${app.label}")) {
+            LaunchOutcome.Launched ->
+                AniResult.Success(Responses.openedApp(app.label, context.style))
+
+            is LaunchOutcome.Deferred -> AniResult.Limitation(
+                spokenResponse = if (context.style.speaksTelugu) {
+                    "${app.label} ready chesa${context.style.particle}. Notification touch chey."
+                } else {
+                    "I've queued ${app.label} — tap the notification to open it."
+                },
+                fallbackTaken = "deferred to a notification"
+            )
+
+            LaunchOutcome.NoHandler ->
+                AniResult.Failure(Responses.appNotInstalled(app.label, context.style))
+
+            is LaunchOutcome.Failed ->
+                AniResult.Failure(Responses.somethingWentWrong(context.style))
         }
     }
 }

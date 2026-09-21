@@ -46,6 +46,8 @@ object NotificationCompat {
     const val PRIORITY_HIGH = 1
     const val CATEGORY_SERVICE = "service"
     const val CATEGORY_REMINDER = "reminder"
+    const val CATEGORY_CALL = "call"
+    const val CATEGORY_ALARM = "alarm"
     const val CATEGORY_MESSAGE = "msg"
     const val VISIBILITY_PUBLIC = 1
     const val VISIBILITY_PRIVATE = 0
@@ -71,6 +73,7 @@ object NotificationCompat {
         fun setVisibility(visibility: Int): Builder = this
         fun setForegroundServiceBehavior(behavior: Int): Builder = this
         fun setContentIntent(intent: android.app.PendingIntent?): Builder = this
+        fun setFullScreenIntent(intent: android.app.PendingIntent?, highPriority: Boolean): Builder = this
         fun addAction(icon: Int, title: CharSequence?, intent: android.app.PendingIntent?): Builder = this
         fun setShowWhen(show: Boolean): Builder = this
         fun build(): Notification = Notification()
