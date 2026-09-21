@@ -58,6 +58,17 @@
     -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!--
+        Not for drawing anything. From Android 10 a background app cannot start an
+        activity, which is why a command spoken to a locked phone used to understand
+        perfectly and open nothing. SYSTEM_ALERT_WINDOW is the platform's documented
+        exemption from that block; the user grants it by hand in Settings ("Display over
+        other apps") and can revoke it at any time. Ani checks it live before every
+        launch and falls back to a full-screen-intent notification when it is absent —
+        it is never assumed. Ani draws no overlay windows.
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Only needed for "location share chey"; declared optional and requested on use. -->

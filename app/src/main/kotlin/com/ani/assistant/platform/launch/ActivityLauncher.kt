@@ -8,10 +8,12 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.ani.assistant.R
 import com.ani.assistant.core.log.AniLog
+import com.ani.assistant.voice.mic.MicStageBus
 
 /**
  * What actually happened when Ani tried to launch something.
@@ -85,6 +87,12 @@ class ActivityLauncher(
         intent: Intent,
         label: String,
         allowDeferral: Boolean = true
+    ): LaunchOutcome = MicStageBus.aroundAction { launchNow(intent, label, allowDeferral) }
+
+    private fun launchNow(
+        intent: Intent,
+        label: String,
+        allowDeferral: Boolean
     ): LaunchOutcome {
         val launchable = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
@@ -97,7 +105,8 @@ class ActivityLauncher(
             hasHandler = true,
             isInForeground = foregroundState.isInForeground,
             sdkInt = Build.VERSION.SDK_INT,
-            allowDeferral = allowDeferral
+            allowDeferral = allowDeferral,
+            canDrawOverlays = canDrawOverlays()
         )
 
         if (route == LaunchRoute.DIRECT) {
@@ -125,6 +134,16 @@ class ActivityLauncher(
         AniLog.i(TAG, "background start blocked; deferring", "action" to (launchable.action ?: "none"))
         return deferBehindNotification(launchable, label)
     }
+
+    /**
+     * Whether the user has granted "Display over other apps".
+     *
+     * Checked live rather than cached: it is revocable from Settings at any moment, and a
+     * stale `true` here means Ani says it opened the dialler when Android dropped the
+     * start on the floor. Wrapped because some manufacturer builds throw from this.
+     */
+    private fun canDrawOverlays(): Boolean =
+        runCatching { Settings.canDrawOverlays(context) }.getOrDefault(false)
 
     /**
      * Posts a high-priority notification whose full-screen intent is the action.

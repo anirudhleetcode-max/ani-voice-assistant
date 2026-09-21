@@ -97,6 +97,66 @@ That also solves self-triggering for free. While Ani is speaking its reply, the 
 is not running at all, so "Rey" inside its own sentence cannot wake it again. There is no
 timing window to tune and no echo-cancellation to get wrong.
 
+## The microphone lifecycle
+
+Stopping the engine instead of pausing it is the decision; making it *observable* is what
+turned it from a plan into something testable. `MicLifecycle` is the whole wake-to-action
+cycle as an explicit state machine, with no Android types in it:
+
+```
+IDLE
+ └─ WAKE_ENGINE_STARTED ──▶ WAKE_LISTENING        owner = WAKE_ENGINE
+     └─ WAKE_DETECTED   ──▶ WAKE_DETECTED         owner = WAKE_ENGINE
+         └─ WAKE_AUDIO_RELEASED ──▶ WAKE_AUDIO_RELEASE   owner = NONE
+             └─ COMMAND_LISTENING_STARTED ──▶ COMMAND_LISTENING  owner = COMMAND_RECOGNIZER
+                 └─ COMMAND_CAPTURED ──▶ PROCESSING       owner = NONE
+                     ├─ ACTION_STARTED  ──▶ ACTION_EXECUTING
+                     ├─ SPEECH_STARTED  ──▶ SPEAKING
+                     └─ COMMAND_LISTENING_STARTED ──▶ COMMAND_LISTENING   (follow-up turn)
+                         └─ EXCHANGE_ENDED ──▶ WAKE_REARM ──▶ WAKE_LISTENING
+```
+
+Two properties are enforced rather than hoped for, and both are unit-tested in
+`MicLifecycleTest`:
+
+**One owner, ever.** Each stage declares who holds the recorder. `COMMAND_LISTENING` is
+reachable only through `WAKE_AUDIO_RELEASE`, so the command recogniser cannot open a
+microphone the wake engine has not finished letting go of. Overlapping recorders do not
+throw on Android — the second one just receives silence — so the failure would otherwise
+look like bad recognition and get chased in the wrong place.
+
+**Nothing is terminal but a stop.** A command that times out, a recogniser that never
+starts, an action that throws: all of them route through `EXCHANGE_ENDED` to
+`WAKE_REARM`, never to `IDLE`. An assistant that can get stuck deaf until it is restarted
+is worse than one that mishears.
+
+Every transition is logged as `[MIC] FROM -> TO event=… owner=…` in debug builds, which
+joins the existing `[WAKE]`, `[COMMAND]`, `[NLU]`, `[CONFIRM]` and `[ACTION]` tags. One
+`adb logcat` filter follows a whole conversation without any of it containing a word the
+user said.
+
+## Acting on what was heard
+
+Hearing the command is half of it. From Android 10 an app in the background cannot start
+an activity: `startActivity` returns normally and nothing appears. A command spoken to a
+phone lying on a table is, by definition, in that case.
+
+`LaunchPolicy` decides the route and `ActivityLauncher` takes it:
+
+| Situation | Route |
+| --- | --- |
+| Ani is on screen | direct start |
+| API < 29 | direct start |
+| "Display over other apps" granted | direct start |
+| Otherwise | full-screen-intent notification, reported as *deferred* |
+| Nothing handles the intent | reported as *no handler* |
+
+`SYSTEM_ALERT_WINDOW` is the platform's own documented exemption from the background
+start restriction, granted by the user in Settings and revocable at any time. It is
+checked live before every launch — never cached — and Ani draws no overlay windows with
+it. Without it Ani still works; it simply says the action is waiting behind a
+notification, which is true, rather than claiming it dialled.
+
 ## Sensitivity
 
 "Rey" is an extremely common word in casual Telugu — it is how people address each other.

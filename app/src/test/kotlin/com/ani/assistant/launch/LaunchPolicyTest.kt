@@ -3,6 +3,7 @@ package com.ani.assistant.launch
 import com.ani.assistant.platform.launch.LaunchPolicy
 import com.ani.assistant.platform.launch.LaunchRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
@@ -132,4 +133,49 @@ class LaunchPolicyTest {
         }
         assertEquals(LaunchRoute.entries.toSet(), routes)
     }
+    @Test
+    fun `display over other apps lifts the background block`() {
+        // SYSTEM_ALERT_WINDOW is the platform's own exemption. With it granted, a command
+        // spoken to a locked phone opens the dialler instead of a notification.
+        assertEquals(
+            LaunchRoute.DIRECT,
+            LaunchPolicy.route(
+                hasHandler = true,
+                isInForeground = false,
+                sdkInt = modernAndroid,
+                allowDeferral = true,
+                canDrawOverlays = true
+            )
+        )
+    }
+
+    @Test
+    fun `the overlay exemption still cannot conjure a handler`() {
+        assertEquals(
+            LaunchRoute.NO_HANDLER,
+            LaunchPolicy.route(
+                hasHandler = false,
+                isInForeground = false,
+                sdkInt = modernAndroid,
+                allowDeferral = true,
+                canDrawOverlays = true
+            )
+        )
+    }
+
+    @Test
+    fun `without the overlay permission a background start is never direct`() {
+        // The default matters: any caller that forgets to pass it gets the safe answer,
+        // which is the honest one rather than the optimistic one.
+        assertNotEquals(
+            LaunchRoute.DIRECT,
+            LaunchPolicy.route(
+                hasHandler = true,
+                isInForeground = false,
+                sdkInt = modernAndroid,
+                allowDeferral = true
+            )
+        )
+    }
+
 }

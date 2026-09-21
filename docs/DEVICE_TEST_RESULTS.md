@@ -52,6 +52,15 @@ the result in.**
 | Bluetooth | NOT TESTED | |
 | Self-trigger protection | NOT TESTED | |
 | Battery test | NOT TESTED | |
+| Low voice, quiet room | NOT TESTED | Whisper at arm's length. Record the DEBUG RMS line. |
+| Low voice, TV on | NOT TESTED | |
+| Call actually placed, app open | NOT TESTED | The dialler must open. A spoken reply is not a pass. |
+| Call actually placed, wake phrase | NOT TESTED | Same command via "Rey", screen off. |
+| Spotify actually opened, wake phrase | NOT TESTED | |
+| Display over other apps ON | NOT TESTED | Expect a direct launch from the background. |
+| Display over other apps OFF | NOT TESTED | Expect a notification, and Ani to *say* so. |
+| Mic handover, wake to command | NOT TESTED | Check the `[MIC]` sequence in logcat. |
+| Re-arm after a silent command | NOT TESTED | Say "Rey", then nothing. Ani must hear the next "Rey". |
 
 ---
 
@@ -201,6 +210,69 @@ confirm the wake word still works afterwards.
 
 Enable notification access, tick WhatsApp, send yourself a message, lock the phone, say
 "Rey em messages vachayi?". Confirm the lock-screen privacy rule holds.
+
+### 24. The action actually happens — app open
+
+Say "Rey, Annayya ki call chey" with Ani on screen. Answer "avunu" when it asks.
+
+**PASS** is the dialler appearing with the number in it. Ani saying "calling Annayya" is
+not a pass; that is precisely the bug this test exists to catch.
+
+Confirm in the log that the pipeline reached the end:
+
+```bash
+adb logcat -d | grep -E "\[NLU\]|\[CONFIRM\]|\[ACTION\]|\[MIC\]"
+```
+
+Expect `[NLU] classified intent=CALL_CONTACT`, then `[CONFIRM] pending action created`,
+then on "avunu" `[NLU] ... confirmed=true` with **no second** `[CONFIRM]` line, then
+`[ACTION] execution started` and `activity launch SUCCESS`. A second `[CONFIRM]` line
+means the confirmation loop is back.
+
+### 25. The action actually happens — via the wake phrase
+
+The same command, but with the phone face down and the screen off. This is the case that
+differs, because Android blocks background activity starts.
+
+Run it twice:
+
+- **"Display over other apps" OFF.** Expect a heads-up or full-screen notification for the
+  call, `activity deferred to notification` in the log, and Ani to say it needs a tap —
+  not that it is calling.
+- **"Display over other apps" ON** (Keep Ani Ready → Display over other apps). Expect the
+  dialler to open directly, and `activity launch SUCCESS` in the log.
+
+Anything that claims the call was placed while nothing opened is a **FAIL**.
+
+### 26. Microphone handover
+
+During test 25, capture the stage trace:
+
+```bash
+adb logcat -d | grep "\[MIC\]"
+```
+
+The sequence must be exactly:
+
+```
+IDLE -> WAKE_LISTENING      event=WAKE_ENGINE_STARTED      owner=WAKE_ENGINE
+WAKE_LISTENING -> WAKE_DETECTED                            owner=WAKE_ENGINE
+WAKE_DETECTED -> WAKE_AUDIO_RELEASE                        owner=NONE
+WAKE_AUDIO_RELEASE -> COMMAND_LISTENING                    owner=COMMAND_RECOGNIZER
+...
+-> WAKE_REARM                                              owner=NONE
+WAKE_REARM -> WAKE_LISTENING                               owner=WAKE_ENGINE
+```
+
+Two things are failures: `COMMAND_LISTENING` appearing without `WAKE_AUDIO_RELEASE`
+before it, and the trace ending anywhere other than back at `WAKE_LISTENING`.
+
+### 27. Nothing leaves Ani deaf
+
+Say "Rey" and then say nothing at all. Wait for the session to time out. Say "Rey" again.
+
+**PASS** is the second "Rey" being heard. Repeat for: saying "Rey" and then something
+Ani cannot act on; saying "Rey" and then walking out of range mid-command.
 
 ### Log check
 

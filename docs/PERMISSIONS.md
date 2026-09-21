@@ -38,6 +38,7 @@ Each is requested at the point of use, not at launch.
 | Notification listener | Settings → Notifications → Device & app notifications | Ani cannot read notifications, and says so rather than guessing |
 | Do Not Disturb policy | Settings → Do Not Disturb access | Ani opens the DND settings screen instead of toggling |
 | Exact alarms (API 31+) | Settings → Alarms & reminders | Reminders may be delivered a few minutes late |
+| Display over other apps (`SYSTEM_ALERT_WINDOW`) | Settings → Apps → Display over other apps, or Keep Ani Ready | A command spoken while Ani is in the background cannot open the dialler, Spotify or any app directly. Ani offers it as a notification and says so — it never claims it launched |
 
 Ani takes you to the right screen and re-checks on every resume, because the user can
 revoke any of these in the background.
@@ -53,6 +54,8 @@ revoke any of these in the background.
 | `SET_ALARM` | Handing alarms to your clock app |
 | `ACCESS_NOTIFICATION_POLICY` | Declares intent to change DND; the user still has to grant policy access |
 | `VIBRATE` | Haptic feedback |
+| `USE_FULL_SCREEN_INTENT` | Surfacing a blocked action over a locked screen. Android 14 grants it only to apps it classes as calling or alarm apps; Ani checks `canUseFullScreenIntent()` and falls back to a heads-up notification |
+| `SYSTEM_ALERT_WINDOW` | **Not for drawing anything.** It is the platform's documented exemption from the Android 10+ background activity start block, which is what lets a hands-free command actually open an app. Ani draws no overlay windows, checks the grant live before every launch, and works without it |
 
 ## Not requested, deliberately
 

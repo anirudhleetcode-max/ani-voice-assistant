@@ -34,7 +34,16 @@ data class RestrictionCheck(
     val explanation: String,
     val state: RestrictionState,
     /** Null when we found no screen on this device that can change it. */
-    val settingsIntent: Intent?
+    val settingsIntent: Intent?,
+    /**
+     * False for a check that improves Ani without being needed for it to listen.
+     *
+     * Only "Display over other apps" is optional today: without it Ani still hears the
+     * wake phrase and still offers every action, just behind a notification instead of
+     * opening it directly. Calling that "not ready" would overstate the problem, so
+     * [BackgroundRestrictions.looksReady] ignores it.
+     */
+    val isRequired: Boolean = true
 )
 
 /**
@@ -62,12 +71,13 @@ class BackgroundRestrictions(private val context: Context) {
     fun checks(): List<RestrictionCheck> = listOf(
         batteryOptimisationCheck(),
         backgroundRestrictionCheck(),
+        displayOverOtherAppsCheck(),
         autoStartCheck()
     )
 
     /** True only when every check the platform can answer says we are unrestricted. */
     fun looksReady(): Boolean = checks()
-        .filter { it.state != RestrictionState.UNKNOWN }
+        .filter { it.isRequired && it.state != RestrictionState.UNKNOWN }
         .all { it.state == RestrictionState.ALLOWED }
 
     // ---------------------------------------------------------------------------------
@@ -123,6 +133,45 @@ class BackgroundRestrictions(private val context: Context) {
                 "service as soon as you leave the app.",
             state = state,
             settingsIntent = firstResolvable(listOf(appDetailsIntent()))
+        )
+    }
+
+    /**
+     * "Display over other apps" — [Settings.canDrawOverlays].
+     *
+     * This one is not about staying alive; it is about being able to *do* anything once
+     * woken. From Android 10 an app in the background cannot start an activity, so a
+     * command spoken to a phone lying face down understands perfectly and then opens
+     * nothing: `startActivity` returns without an error and the dialler never appears.
+     *
+     * SYSTEM_ALERT_WINDOW is the platform's documented exemption from that block, and it
+     * is the only one an assistant can hold honestly — the user grants it themselves and
+     * can take it back. Without it, Ani still works: the action arrives as a full-screen
+     * or heads-up notification instead, and Ani says so rather than claiming it dialled.
+     * With it, "Rey, Annayya ki call chey" opens the dialler with the phone still on the
+     * table, which is the entire point.
+     */
+    private fun displayOverOtherAppsCheck(): RestrictionCheck {
+        val granted = runCatching { Settings.canDrawOverlays(context) }.getOrDefault(false)
+        return RestrictionCheck(
+            id = "display_over_other_apps",
+            title = "Display over other apps",
+            explanation = "Without this, Android blocks Ani from opening the dialler, Spotify " +
+                "or any other app while the screen is off or Ani is in the background. Ani " +
+                "will still hear you and will still offer the action as a notification — but " +
+                "you will have to tap it. Turn this on for genuinely hands-free actions.",
+            state = if (granted) RestrictionState.ALLOWED else RestrictionState.RESTRICTED,
+            settingsIntent = firstResolvable(
+                listOf(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.fromParts("package", context.packageName, null)
+                    ),
+                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION),
+                    appDetailsIntent()
+                )
+            ),
+            isRequired = false
         )
     }
 

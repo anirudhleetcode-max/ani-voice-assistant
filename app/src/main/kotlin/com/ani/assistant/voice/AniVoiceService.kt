@@ -17,10 +17,15 @@ import com.ani.assistant.AniApplication
 import com.ani.assistant.MainActivity
 import com.ani.assistant.R
 import com.ani.assistant.core.log.AniLog
+import com.ani.assistant.voice.mic.MicEvent
+import com.ani.assistant.voice.mic.MicLifecycle
+import com.ani.assistant.voice.mic.MicStage
+import com.ani.assistant.voice.mic.MicStageBus
 import com.ani.assistant.voice.wake.WakeWordEngine
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -48,9 +53,29 @@ class AniVoiceService : LifecycleService() {
     private var wakeJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    /**
+     * The microphone's position in the wake -> command -> answer -> re-arm cycle.
+     *
+     * Every stage change is logged, so a failure on a real phone reads as a sequence in
+     * logcat rather than a silence. The tags are the stage names the rest of the pipeline
+     * already uses — `[WAKE]`, `[COMMAND]`, `[NLU]`, `[CONFIRM]`, `[ACTION]` — so one
+     * `adb logcat` filter follows a whole conversation.
+     */
+    private val mic = MicLifecycle { from, to, event ->
+        AniLog.i(
+            TAG,
+            "[MIC] " + from.name + " -> " + to.name,
+            "event" to event.name,
+            "owner" to to.owner.name
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        // The tool layer reports ACTION_STARTED / ACTION_FINISHED through here, because
+        // the code that launches a call has no idea a wake word started it.
+        MicStageBus.install(mic::on)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -145,7 +170,18 @@ class AniVoiceService : LifecycleService() {
                 }
 
                 ServiceState.setWakeEngineReady(true)
-                AniLog.i(TAG, "wake loop started", "engine" to selection.engine.id.name)
+
+                if (!mic.canStartWakeEngine()) {
+                    // An exchange is still winding down. Starting the wake engine now
+                    // would open a second recorder on top of the command recogniser,
+                    // which is the race this machine exists to make impossible.
+                    AniLog.w(TAG, "[WAKE] re-arm deferred", "stage" to mic.stage.name)
+                    delay(SHORT_BACKOFF_MILLIS)
+                    continue
+                }
+
+                mic.on(MicEvent.WAKE_ENGINE_STARTED)
+                AniLog.i(TAG, "[WAKE] listening", "engine" to selection.engine.id.name)
 
                 val handledAWake = runCatching { collectDetections(graph, selection.engine) }
                     .getOrDefault(false)
@@ -186,6 +222,7 @@ class AniVoiceService : LifecycleService() {
                 // Ignore anything heard while a conversation is already running.
                 if (graph.voiceSession.isBusy) return@collect
                 detection = candidate
+                mic.on(MicEvent.WAKE_DETECTED)
                 // Throwing unwinds out of collect, which cancels the flow and releases
                 // the microphone before the command recogniser asks for it.
                 throw WakeDetected
@@ -193,7 +230,11 @@ class AniVoiceService : LifecycleService() {
         } catch (signal: WakeDetectedSignal) {
             // Expected: this is how the collector stops.
         } finally {
+            // release() closes the AudioRecord. Announcing it as a stage rather than
+            // assuming it is what stops the command recogniser from asking for a
+            // microphone the wake engine has not finished letting go of.
             engine.release()
+            if (detection != null) mic.on(MicEvent.WAKE_AUDIO_RELEASED)
         }
 
         val wake = detection ?: return false
@@ -201,7 +242,7 @@ class AniVoiceService : LifecycleService() {
         ServiceState.setLastWake(wake.atEpochMillis)
         AniLog.i(
             TAG,
-            "wake phrase detected",
+            "[WAKE] detected",
             "engine" to engine.id.name,
             "confidence" to "%.2f".format(wake.confidence)
         )
@@ -222,7 +263,10 @@ class AniVoiceService : LifecycleService() {
         val phrase = graph.settingsState.value.effectiveWakePhrases().firstOrNull() ?: DEFAULT_PHRASE
         updateNotification(phrase, listening = false)
         try {
-            engine.setPaused(true)
+            // No setPaused here on purpose. collectDetections already called release(),
+            // so the engine is gone rather than muted — pausing a released engine reads
+            // as if the microphone were still held, which is how the original race got
+            // written in the first place.
             graph.voiceSession.startListening(playChime = true)
 
             // startListening dispatches to another coroutine, so the state is still IDLE
@@ -234,21 +278,55 @@ class AniVoiceService : LifecycleService() {
                 graph.voiceSession.state.first { it.isActive }
             }
             if (started == null) {
-                AniLog.w(TAG, "voice session never started; abandoning exchange")
+                AniLog.w(TAG, "[COMMAND] session never started; abandoning exchange")
                 ServiceState.setLastError("Ani woke up but could not start listening.")
                 return
             }
 
-            graph.voiceSession.state.first { !it.isActive }
+            AniLog.i(TAG, "[COMMAND] listening")
+
+            // Follow the session rather than merely waiting for it to finish. Each state
+            // it passes through is a microphone stage, and tracking them is what makes a
+            // stalled exchange readable in logcat instead of a gap.
+            graph.voiceSession.state
+                .onEach { state -> micEventFor(state)?.let(mic::on) }
+                .first { !it.isActive }
+            AniLog.i(TAG, "[COMMAND] exchange complete")
             ServiceState.setLastCommand(System.currentTimeMillis())
         } catch (error: Exception) {
             AniLog.e(TAG, "exchange failed", error)
             ServiceState.setLastError("The conversation ended unexpectedly.")
         } finally {
-            engine.setPaused(false)
+            // Unconditional. A timed-out session, a dead recogniser and an action that
+            // threw all land here, and all three must leave the machine in WAKE_REARM.
+            // The one outcome that must never exist is an Ani that stops listening
+            // because something went wrong once.
+            mic.on(MicEvent.EXCHANGE_ENDED)
+            graph.voiceSession.stop()
             releaseWakeLock()
             updateNotification(phrase, listening = true)
         }
+    }
+
+    /**
+     * Translates what the session is doing into what the microphone is doing.
+     *
+     * [VoiceState] is about the conversation; [MicStage] is about who holds the recorder.
+     * They are not the same thing — SPEAKING means the microphone is closed — so the
+     * mapping is written out rather than inferred.
+     */
+    private fun micEventFor(state: VoiceState): MicEvent? = when (state) {
+        VoiceState.LISTENING -> MicEvent.COMMAND_LISTENING_STARTED
+        VoiceState.SPEAKING -> MicEvent.SPEECH_STARTED
+        VoiceState.PROCESSING -> when (mic.stage) {
+            MicStage.COMMAND_LISTENING -> MicEvent.COMMAND_CAPTURED
+            MicStage.SPEAKING -> MicEvent.SPEECH_FINISHED
+            MicStage.ACTION_EXECUTING -> MicEvent.ACTION_FINISHED
+            else -> null
+        }
+        // WAKE_DETECTED is the chime, IDLE and ERROR are handled by the exchange ending.
+        VoiceState.WAKE_DETECTED, VoiceState.WAITING_FOR_WAKE,
+        VoiceState.IDLE, VoiceState.ERROR -> null
     }
 
     private fun acquireWakeLock() {
@@ -270,6 +348,7 @@ class AniVoiceService : LifecycleService() {
     // ---------------------------------------------------------------------------------
 
     private fun stopListening() {
+        mic.on(MicEvent.SERVICE_STOPPED)
         wakeJob?.cancel()
         wakeJob = null
         releaseWakeLock()
@@ -284,6 +363,8 @@ class AniVoiceService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        mic.on(MicEvent.SERVICE_STOPPED)
+        MicStageBus.clear()
         wakeJob?.cancel()
         wakeJob = null
         releaseWakeLock()

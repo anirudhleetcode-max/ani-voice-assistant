@@ -32,7 +32,8 @@ object LaunchPolicy {
         hasHandler: Boolean,
         isInForeground: Boolean,
         sdkInt: Int,
-        allowDeferral: Boolean
+        allowDeferral: Boolean,
+        canDrawOverlays: Boolean = false
     ): LaunchRoute = when {
         !hasHandler -> LaunchRoute.NO_HANDLER
 
@@ -41,6 +42,15 @@ object LaunchPolicy {
 
         // Before API 29 a background start still worked.
         sdkInt < BACKGROUND_START_BLOCKED_FROM_SDK -> LaunchRoute.DIRECT
+
+        // SYSTEM_ALERT_WINDOW is the platform's own exemption from the background start
+        // restriction, and the only one an assistant can legitimately hold. It is not a
+        // workaround: the user grants "Display over other apps" themselves in Settings,
+        // it is revocable, and Android documents it as lifting exactly this block. With
+        // it, a command spoken to a locked phone opens the dialler for real instead of
+        // arriving as a notification the user has to reach for — which defeats the point
+        // of a hands-free assistant.
+        canDrawOverlays -> LaunchRoute.DIRECT
 
         allowDeferral -> LaunchRoute.DEFER
 
