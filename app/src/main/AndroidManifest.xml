@@ -83,6 +83,26 @@
         android:required="true" />
 
     <!--
+      Declared because a permission implies its hardware as REQUIRED unless we say
+      otherwise, and Play filters the install list on that. CALL_PHONE would quietly make
+      Ani uninstallable on any device without a radio, and the location permissions would
+      do the same for a device without GPS — even though everything except calling and
+      "location share chey" works perfectly well on both.
+
+      The microphone above is the one feature genuinely required: an assistant that cannot
+      hear is not an assistant.
+    -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
+
+    <!--
       Package visibility. QUERY_ALL_PACKAGES is deliberately NOT declared: Play restricts
       it to apps whose core function requires a full inventory, and Ani's does not. These
       queries are enough to launch apps by intent and to resolve the handful of apps the
