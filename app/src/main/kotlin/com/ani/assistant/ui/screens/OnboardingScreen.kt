@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ani.assistant.core.permission.AniPermission
 import com.ani.assistant.core.permission.PermissionStatus
+import com.ani.assistant.voice.wake.VoskModelState
 
 /** One step of onboarding. */
 data class OnboardingStep(
@@ -40,7 +41,9 @@ data class OnboardingStep(
     /** The capability this step asks for, if any. */
     val permission: AniPermission? = null,
     /** True for the step that lets the user pick their wake phrase. */
-    val isWakePhraseStep: Boolean = false
+    val isWakePhraseStep: Boolean = false,
+    /** True for the step that offers the one-time wake-model download. */
+    val isWakeModelStep: Boolean = false
 )
 
 /**
@@ -56,6 +59,8 @@ fun OnboardingScreen(
     steps: List<OnboardingStep>,
     permissions: Map<AniPermission, PermissionStatus>,
     wakePhrase: String,
+    wakeModelState: VoskModelState,
+    onDownloadWakeModel: () -> Unit,
     onWakePhraseChange: (String) -> Unit,
     onRequestPermission: (AniPermission) -> Unit,
     onFinish: () -> Unit,
@@ -98,6 +103,14 @@ fun OnboardingScreen(
             if (step.isWakePhraseStep) {
                 Spacer(Modifier.height(28.dp))
                 WakePhraseField(value = wakePhrase, onValueChange = onWakePhraseChange)
+            }
+
+            if (step.isWakeModelStep) {
+                Spacer(Modifier.height(28.dp))
+                WakeModelBlock(
+                    state = wakeModelState,
+                    onDownload = onDownloadWakeModel
+                )
             }
 
             val permission = step.permission
@@ -166,6 +179,48 @@ private fun WakePhraseField(value: String, onValueChange: (String) -> Unit) {
     )
 }
 
+/**
+ * The one-time wake-model download, offered during setup.
+ *
+ * Skippable. Without the model Ani still works on a tap; it just cannot hear "Rey" until
+ * this is done, and the step says exactly that rather than blocking the flow.
+ */
+@Composable
+private fun WakeModelBlock(
+    state: VoskModelState,
+    onDownload: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = when (state) {
+                is VoskModelState.Ready -> "Installed. Ani can hear you with the screen off."
+                VoskModelState.NotInstalled ->
+                    "About 40 MB, once. After that the wake word works with no internet, " +
+                        "and nothing you say is ever uploaded."
+                is VoskModelState.Installing -> "Installing… ${state.percent}%"
+                is VoskModelState.Failed -> state.reason
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (state is VoskModelState.Failed) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(16.dp))
+        when (state) {
+            is VoskModelState.Ready -> Text(
+                text = "Ready",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            is VoskModelState.Installing -> Unit
+            else -> Button(onClick = onDownload) { Text("Download now") }
+        }
+    }
+}
+
 @Composable
 private fun PermissionStatusBlock(
     permission: AniPermission,
@@ -228,6 +283,12 @@ val defaultOnboardingSteps: List<OnboardingStep> = listOf(
         title = "Phone",
         body = AniPermission.PHONE.whyNeeded,
         permission = AniPermission.PHONE
+    ),
+    OnboardingStep(
+        title = "Hearing \"Rey\"",
+        body = "Ani listens for your wake phrase on the phone itself — no audio leaves the " +
+            "device and nothing is recorded. That needs a small speech model downloaded once.",
+        isWakeModelStep = true
     ),
     OnboardingStep(
         title = "Notification access",

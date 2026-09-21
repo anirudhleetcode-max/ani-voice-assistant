@@ -33,20 +33,41 @@ now". Every such case is a typed `Limitation` result in the code, not a silent s
 fixed at compile time. The language model is asked for *sentences*, never for actions,
 and it is never sent your contacts, notifications or messages.
 
+**The wake word runs on the phone.** "Rey" is detected by a small speech model on the
+device — no audio is uploaded and nothing is recorded. See
+[docs/WAKE_WORD.md](docs/WAKE_WORD.md) for why the obvious choice (Porcupine) is not the
+default, and what the three engines actually cost.
+
 ## Status
 
-| Part | State |
-| --- | --- |
-| Language engine (`core-nlu`) | Built and tested — 106 tests, 129 utterances, all passing |
-| Backend | Built and tested — 14 tests passing |
-| Android app | Complete source; **not compiled in this environment** — see below |
+Read this table as written. The four words are not interchangeable.
 
-The container this was built in has `dl.google.com` blocked by network policy, which means
-no Android SDK, no Android Gradle Plugin and no AndroidX artifacts. The Android module has
-therefore never been compiled. Everything that could be verified without them was, which
-is why the language engine — the part that needed the most iteration — is a plain JVM
-library rather than an Android one. See [docs/SETUP.md](docs/SETUP.md) for the first
-build, and be ready for the ordinary first-compile fixes in the app module.
+| Part | Status | |
+| --- | --- | --- |
+| Language engine (`core-nlu`) | **VERIFIED** | 106 tests, 129 utterances, all passing |
+| Backend | **VERIFIED** | 14 tests passing |
+| App storage + settings | **VERIFIED** | 13 tests passing |
+| Android app compiles | **BUILT** | All 67 files type-check against the real Android 35 API |
+| APK | **BLOCKED** | No Android SDK in the build environment |
+| Anything on a phone | **NOT TESTED** | No device has ever run this |
+
+- **VERIFIED** — tested and passing.
+- **BUILT** — compiles, not yet run.
+- **BLOCKED** — a platform or environment limitation prevents it, evidenced in the docs.
+- **NOT TESTED** — not attempted.
+
+**There is no APK yet.** The environment this was built in blocks `dl.google.com`, which is
+the only source of the Android SDK, the Android Gradle Plugin and every AndroidX artifact
+— every mirror was checked too. So `:app:assembleDebug` has never run here.
+
+What was done instead: [`tools/compile-check`](tools/compile-check) compiles every Android
+source file against the genuine Android 35 framework jar and the genuine Compose API, both
+of which *are* on Maven Central, plus the real Vosk and Porcupine AARs. That turns "never
+compiled" into "compiles against the real APIs", and it caught a genuine type error on its
+first run. It is not a substitute for a build.
+
+Next step is yours: run `./gradlew :app:assembleDebug` on a machine with the SDK and work
+through [docs/DEVICE_TEST_RESULTS.md](docs/DEVICE_TEST_RESULTS.md).
 
 ## Quick start
 
@@ -68,6 +89,8 @@ Full instructions, including the optional AI backend: [docs/SETUP.md](docs/SETUP
 | Document | What's in it |
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pipeline fits together and why |
+| [WAKE_WORD.md](docs/WAKE_WORD.md) | The three engines, and why Vosk is the default |
+| [DEVICE_TEST_RESULTS.md](docs/DEVICE_TEST_RESULTS.md) | The physical test plan, and what is still untested |
 | [SETUP.md](docs/SETUP.md) | Clone → build → run on a real phone |
 | [PERMISSIONS.md](docs/PERMISSIONS.md) | Every permission, why, and what breaks without it |
 | [AI_INTEGRATION.md](docs/AI_INTEGRATION.md) | Where the model sits and what it is not allowed to do |

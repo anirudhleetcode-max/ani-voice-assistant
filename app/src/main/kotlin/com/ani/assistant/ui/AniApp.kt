@@ -83,10 +83,13 @@ fun AniApp(
 
     if (!settings.onboardingCompleted) {
         val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+        val wakeModel by viewModel.wakeModelState.collectAsStateWithLifecycle()
         OnboardingScreen(
             steps = defaultOnboardingSteps,
             permissions = permissions,
             wakePhrase = settings.wakePhrases.firstOrNull().orEmpty(),
+            wakeModelState = wakeModel,
+            onDownloadWakeModel = viewModel::downloadWakeModel,
             onWakePhraseChange = { phrase ->
                 viewModel.updateSettings { current ->
                     current.copy(

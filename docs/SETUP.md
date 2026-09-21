@@ -43,10 +43,17 @@ Android Studio writes this for you on first open. It is git-ignored.
 ./gradlew :app:assembleDebug
 ```
 
-> **First build note.** The Android module was written in an environment where
-> `dl.google.com` was blocked, so it has never been compiled. Expect the ordinary
-> first-compile round of import and signature fixes. The `core-nlu` module and the backend
-> were both built and tested, so the language engine underneath is known good.
+> **First build note.** The Android module has never been through AGP — `dl.google.com` is
+> blocked in the environment it was written in. It *has* been compiled against the real
+> Android 35 framework API and the real Compose API via `tools/compile-check`, so the
+> Kotlin is sound. What has never run is resource merging, R8 and lint, so expect those to
+> be where any remaining problems are.
+>
+> Run the harness first; it is faster than a full build and needs no SDK:
+>
+> ```bash
+> cd tools/compile-check && gradle compileKotlin && cd ../..
+> ```
 
 The APK lands at `app/build/outputs/apk/debug/app-debug.apk`.
 
@@ -79,6 +86,26 @@ Then build the app pointing at it:
 
 Use your machine's LAN address for a real phone, or `http://10.0.2.2:8000` for the
 emulator. The URL is build config, not a secret — the API key never leaves the backend.
+
+## 6b. The wake word
+
+The wake word needs a one-time ~40 MB on-device speech model. Onboarding offers it, or
+Settings → Assistant → *On-device wake model* → Download.
+
+To bundle it in the APK instead, unzip
+`https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip` into
+`app/src/main/assets/vosk-model/` so that `assets/vosk-model/am/final.mdl` exists.
+
+See [WAKE_WORD.md](WAKE_WORD.md) for the engine choice and for Porcupine setup.
+
+## 6c. Keep Ani Ready — do not skip this on a realme
+
+realme, OPPO, Xiaomi, vivo, Samsung and others run a battery manager on top of Android's
+that will kill the listening service. **Settings → Keep Ani Ready** checks what Android
+will report and takes you to the right screens.
+
+The auto-start check shows "Can't check" on purpose: no app can read an OEM auto-start
+list, so that one has to be confirmed by eye. Ani will not claim a state it did not read.
 
 ## 7. First run on the phone
 

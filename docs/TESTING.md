@@ -3,13 +3,15 @@
 ## What runs
 
 ```bash
-cd core-nlu && ./gradlew test        # 106 tests   — the language engine
-cd backend  && pytest                # 14 tests    — the API
-./gradlew :app:testDebugUnitTest     # 13 tests    — storage and settings
+cd core-nlu && ./gradlew test                 # 106 tests  — the language engine
+cd backend  && pytest                         # 14 tests   — the API
+cd tools/compile-check && gradle test         # 13 tests   — app storage and settings,
+                                              #              plus a full type-check of
+                                              #              every Android source file
 ```
 
-The first two were run and pass. The third compiles and passes against its dependencies —
-see *What has not been verified* below.
+All three run and pass. None of them needs an Android SDK, which is the point — see
+*What has not been verified* below for what that does and does not prove.
 
 ## The language corpus
 
@@ -91,21 +93,29 @@ mid-confirmation, and the confirmation threshold behaving differently at each se
 
 ## What has not been verified
 
-**The Android module has never been compiled.** The environment this was built in has
-`dl.google.com` blocked, so there is no Android SDK, no AGP and no AndroidX. That means:
+**The Android module has never been through AGP.** `dl.google.com` is blocked in the
+build environment, so there is no Android SDK, no AGP and no AndroidX. That means:
 
-- No Compose UI has been rendered.
-- No instrumented test has run.
 - No APK exists.
-- The app module's Kotlin has not been through a compiler *as an Android module*.
+- No Compose UI has ever been rendered.
+- No instrumented test has run.
+- Resource merging, R8 and lint have never run.
+- **Nothing has ever run on a phone.** See `DEVICE_TEST_RESULTS.md`.
 
-What was done instead: the pure-Kotlin parts of the app module — the storage DTOs and the
-settings model, which import nothing from Android — were compiled and tested in a
-standalone JVM project against `core-nlu`. That is the 13 tests above. The rest of the app
-module is reviewed source that should be expected to need the ordinary first-compile pass.
+What *has* happened: `tools/compile-check` compiles all 67 Android source files against
+the genuine Android 35 framework jar (`org.robolectric:android-all`, on Maven Central) and
+the genuine Compose API (JetBrains Compose Multiplatform, also on Maven Central), plus the
+real Vosk and Porcupine AARs. It found a genuine type error on its first run — a
+`String` being passed where an `IntentType` extension was declared — that no amount of
+static checking had caught.
 
-The language engine was deliberately built as a plain JVM library precisely so this
-situation would not affect it.
+Treat that as strong evidence about the Kotlin and no evidence at all about the rest. Six
+AndroidX libraries are Google-Maven-only and are represented by hand-written stubs, so a
+signature mismatch *there* is checked against the stub rather than the real library. The
+Android framework and Compose halves are genuine.
+
+The language engine was deliberately built as a plain JVM library precisely so none of
+this would affect it.
 
 ## Adding a language case
 

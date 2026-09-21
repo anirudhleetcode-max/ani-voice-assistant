@@ -3,7 +3,7 @@
 Type-checks `app/src/main/kotlin` **without an Android SDK**.
 
 ```bash
-cd tools/compile-check && gradle compileKotlin
+cd tools/compile-check && gradle test      # compiles everything and runs the unit tests
 ```
 
 ## What this is
@@ -21,6 +21,9 @@ It exists because the environment this project was first built in had `dl.google
 blocked, so `:app:assembleDebug` could not run at all. Rather than ship unverified Kotlin,
 this harness compiles it against the real APIs. It found a genuine type error on its first
 run that static analysis had missed.
+
+It also compiles and runs `app/src/test/kotlin`, so the app's unit tests are real tests
+run in CI rather than tests that only exist on paper.
 
 ## What this is not
 

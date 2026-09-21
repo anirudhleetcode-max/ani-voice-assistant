@@ -43,6 +43,23 @@ jobs:
         working-directory: backend
         run: pytest
 
+  compile-check:
+    name: Android sources type-check (no SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      # Compiles every Android source file against the real Android 35 framework and the
+      # real Compose API, and runs the app's unit tests. Needs no Android SDK, so it keeps
+      # reporting even when the SDK job cannot run.
+      - name: Compile and test
+        working-directory: tools/compile-check
+        run: gradle test --no-daemon
+
   android:
     name: Android app
     runs-on: ubuntu-latest

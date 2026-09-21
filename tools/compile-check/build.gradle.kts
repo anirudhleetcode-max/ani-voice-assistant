@@ -95,6 +95,12 @@ sourceSets {
         kotlin.srcDirs("stubs", "../../app/src/main/kotlin")
         kotlin.srcDir(generateResourceStub.map { layout.buildDirectory.dir("generated/res-stub") })
     }
+    // The app's own unit tests, so `gradle test` here actually runs them. Tests that need
+    // a real Android runtime (Robolectric, instrumented) are excluded: they belong to
+    // `./gradlew :app:testDebugUnitTest`.
+    test {
+        kotlin.srcDirs("../../app/src/test/kotlin")
+    }
 }
 
 /*
@@ -121,18 +127,40 @@ dependencies {
     // JNA comes through as a normal jar and Vosk's public API exposes it.
     compileOnly("net.java.dev.jna:jna:5.13.0")
 
+    // The Compose compiler plugin runs over the test compilation too and refuses to work
+    // without the runtime on the classpath, even though no test touches Compose.
+    testCompileOnly("org.jetbrains.compose.runtime:runtime-desktop:1.7.3")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.ani:core-nlu")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    testCompileOnly("org.robolectric:android-all:15-robolectric-12650502")
+
     // The genuine Android 15 (API 35) framework jar.
     compileOnly("org.robolectric:android-all:15-robolectric-12650502")
 
-    // The genuine androidx.compose.* API, via Compose Multiplatform.
-    implementation("org.jetbrains.compose.runtime:runtime-desktop:1.7.3")
-    implementation("org.jetbrains.compose.ui:ui-desktop:1.7.3")
-    implementation("org.jetbrains.compose.foundation:foundation-desktop:1.7.3")
-    implementation("org.jetbrains.compose.material3:material3-desktop:1.7.3")
-    implementation("org.jetbrains.compose.material:material-icons-extended-desktop:1.7.3")
+    /*
+     * The genuine androidx.compose.* API, via Compose Multiplatform.
+     *
+     * compileOnly rather than implementation: Compose's *runtime* classpath pulls real
+     * androidx artifacts from Google Maven, which is exactly what this harness exists to
+     * do without. Nothing here is ever executed, so a compile-time-only classpath is all
+     * that is needed — and it keeps `gradle test` resolvable.
+     */
+    compileOnly("org.jetbrains.compose.runtime:runtime-desktop:1.7.3")
+    compileOnly("org.jetbrains.compose.ui:ui-desktop:1.7.3")
+    compileOnly("org.jetbrains.compose.foundation:foundation-desktop:1.7.3")
+    compileOnly("org.jetbrains.compose.material3:material3-desktop:1.7.3")
+    compileOnly("org.jetbrains.compose.material:material-icons-extended-desktop:1.7.3")
 
     implementation("com.ani:core-nlu")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}
+
+tasks.test {
+    // The Android framework jar is compile-only; anything needing it at runtime is out of
+    // scope for this harness by design.
+    testLogging { events("passed", "failed") }
 }
