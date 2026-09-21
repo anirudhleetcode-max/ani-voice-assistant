@@ -5,6 +5,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.ani.assistant.core.log.AniLog
@@ -14,10 +16,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 
 /**
  * The platform recogniser.
@@ -59,13 +66,28 @@ class AndroidSpeechRecognizerProvider(
      * recogniser is markedly better. It is a switch rather than a guess, and whichever
      * one runs is announced through [SpeechEvent.Started].
      */
-    private val preferOnDevice: () -> Boolean = { false }
+    private val preferOnDevice: () -> Boolean = { false },
+    /**
+     * Read per attempt, not captured once.
+     *
+     * The endpointing windows are settings-backed and the whole point of making them so
+     * is that they can be tuned from measurements without a restart. Caching the value
+     * at construction would quietly defeat that.
+     */
+    private val endpointingProvider: () -> EndpointingConfig = { EndpointingConfig() }
 ) : SpeechRecognizerProvider {
 
     /** What ran last, for the Mic Test screen. Never a transcript. */
     @Volatile
     var lastRecognizerKind: RecognizerKind? = null
         private set
+
+    private val _audioLevel = MutableStateFlow(0f)
+
+    /** Conflated by construction; see [SpeechRecognizerProvider.audioLevel]. */
+    override val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
+
+
 
     override fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
@@ -75,7 +97,110 @@ class AndroidSpeechRecognizerProvider(
             runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }
                 .getOrDefault(false)
 
+    /**
+     * Asks the platform which languages on-device recognition actually has.
+     *
+     * The alternative — trying `createOnDeviceSpeechRecognizer` and seeing whether it
+     * errors — costs a whole failed command to find out, and cannot distinguish "not
+     * supported" from "supported, not downloaded yet".
+     */
+    suspend fun checkSupport(language: Language): RecognitionSupportReport {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            AniLog.i(TAG, "[RECOGNIZER] ON_DEVICE_SUPPORT_NOT_QUERIED sdk=${'$'}{Build.VERSION.SDK_INT}")
+            return RecognitionSupportReport.UNAVAILABLE
+        }
+        if (!isOnDeviceAvailable()) {
+            AniLog.i(TAG, "[RECOGNIZER] ON_DEVICE_UNAVAILABLE")
+            return RecognitionSupportReport(queried = true, onDeviceAvailable = false)
+        }
+
+        val report = withContext(Dispatchers.Main) {
+            val recognizer = runCatching {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            }.getOrNull() ?: return@withContext RecognitionSupportReport(
+                queried = true,
+                onDeviceAvailable = false,
+                error = "could not create the on-device recogniser"
+            )
+
+            try {
+                suspendCancellableCoroutine { continuation ->
+                    recognizer.checkRecognitionSupport(
+                        intentFor(
+                            localeTag = language.toLocaleTag(),
+                            partialResults = true,
+                            endpointing = endpointingProvider()
+                        ),
+                        { runnable -> runnable.run() },
+                        object : RecognitionSupportCallback {
+                            override fun onSupportResult(support: RecognitionSupport) {
+                                if (continuation.isActive) {
+                                    continuation.resume(
+                                        RecognitionSupportReport(
+                                            queried = true,
+                                            onDeviceAvailable = true,
+                                            installedOnDevice = support.installedOnDeviceLanguages,
+                                            supportedOnDevice = support.supportedOnDeviceLanguages,
+                                            pendingDownload = support.pendingOnDeviceLanguages
+                                        )
+                                    )
+                                }
+                            }
+
+                            override fun onError(error: Int) {
+                                if (continuation.isActive) {
+                                    continuation.resume(
+                                        RecognitionSupportReport(
+                                            queried = true,
+                                            onDeviceAvailable = true,
+                                            error = errorName(error)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    )
+                }
+            } catch (error: Exception) {
+                RecognitionSupportReport(
+                    queried = true,
+                    onDeviceAvailable = true,
+                    error = error.javaClass.simpleName
+                )
+            } finally {
+                runCatching { recognizer.destroy() }
+            }
+        }
+
+        AniLog.i(TAG, "[RECOGNIZER] support " + report.describe())
+        return report
+    }
+
     override fun listen(language: Language, partialResults: Boolean): Flow<SpeechEvent> =
+        listenWith(
+            localeTag = language.toLocaleTag(),
+            preferredKind = if (preferOnDevice()) RecognizerKind.ON_DEVICE else RecognizerKind.PLATFORM,
+            endpointing = endpointingProvider(),
+            partialResults = partialResults
+        )
+
+    /**
+     * One recognition attempt with everything stated explicitly.
+     *
+     * Exists for the A/B benchmark, which has to hold the microphone and the sentence
+     * constant while varying exactly one thing — the engine, or the language, or the
+     * endpointing. [listen] is this with the app's current settings filled in.
+     *
+     * [preferredKind] is a preference, not a promise: when on-device is asked for and
+     * cannot be created, the platform recogniser is used and **the result says so**. What
+     * never happens is a switch part-way through one attempt.
+     */
+    fun listenWith(
+        localeTag: String,
+        preferredKind: RecognizerKind,
+        endpointing: EndpointingConfig,
+        partialResults: Boolean = true
+    ): Flow<SpeechEvent> =
         callbackFlow {
             if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                 AniLog.w(TAG, "[COMMAND] no recognition service installed")
@@ -84,7 +209,6 @@ class AndroidSpeechRecognizerProvider(
                 return@callbackFlow
             }
 
-            val localeTag = language.toLocaleTag()
             val levels = SpeechLevelMonitor()
 
             /** Results and errors must never be dropped; a lost send here is a real bug. */
@@ -106,8 +230,10 @@ class AndroidSpeechRecognizerProvider(
 
                 override fun onRmsChanged(rmsdB: Float) {
                     levels.onRms(rmsdB)
-                    // The platform reports roughly -2..10 dB. Normalise for the orb.
-                    trySend(SpeechEvent.AudioLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f)))
+                    // Straight into a StateFlow, never down the event channel. The orb
+                    // wants the newest value and nothing else; the transcript wants
+                    // guaranteed delivery. Mixing them serves neither.
+                    _audioLevel.value = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
                 }
 
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -171,7 +297,7 @@ class AndroidSpeechRecognizerProvider(
             }
 
             val recognizer = withContext(Dispatchers.Main) {
-                createRecognizer()
+                createRecognizer(preferredKind)
             }
             if (recognizer == null) {
                 AniLog.e(TAG, "[COMMAND] could not create a recogniser")
@@ -181,18 +307,29 @@ class AndroidSpeechRecognizerProvider(
             }
 
             lastRecognizerKind = recognizer.kind
+            // The engine is named explicitly, never inferred, and never changed
+            // part-way through a command.
             AniLog.i(
                 TAG,
-                "[COMMAND] recognizer started",
-                "kind" to recognizer.kind.name,
-                "locale" to localeTag,
-                "onDeviceAvailable" to isOnDeviceAvailable()
+                "[RECOGNIZER] ENGINE=" + if (recognizer.kind == RecognizerKind.ON_DEVICE) {
+                    "ON_DEVICE"
+                } else {
+                    "SYSTEM_NETWORK"
+                },
+                "language" to localeTag,
+                "requested" to preferredKind.name,
+                "onDeviceAvailable" to isOnDeviceAvailable(),
+                "completeSilenceMs" to endpointing.completeSilenceMillis,
+                "possiblyCompleteSilenceMs" to endpointing.possiblyCompleteSilenceMillis,
+                "minimumSpeechMs" to endpointing.minimumSpeechMillis
             )
             trySend(SpeechEvent.Started(recognizer.kind, localeTag))
 
             withContext(Dispatchers.Main) {
                 recognizer.instance.setRecognitionListener(listener)
-                recognizer.instance.startListening(intentFor(language, partialResults))
+                recognizer.instance.startListening(
+                    intentFor(localeTag, partialResults, endpointing)
+                )
             }
 
             awaitClose {
@@ -231,30 +368,38 @@ class AndroidSpeechRecognizerProvider(
      * A fallback is always logged. Silently swapping recognisers is how you end up with a
      * bug that reproduces on one phone and not another with no way to tell why.
      */
-    private fun createRecognizer(): Created? {
-        if (preferOnDevice() && isOnDeviceAvailable()) {
-            val onDevice = runCatching {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            }.getOrNull()
-            if (onDevice != null) return Created(onDevice, RecognizerKind.ON_DEVICE)
-            AniLog.w(TAG, "[COMMAND] on-device recogniser refused; using the platform one")
+    private fun createRecognizer(preferredKind: RecognizerKind): Created? {
+        if (preferredKind == RecognizerKind.ON_DEVICE) {
+            if (!isOnDeviceAvailable()) {
+                AniLog.i(TAG, "[RECOGNIZER] ON_DEVICE_UNAVAILABLE; using SYSTEM_NETWORK")
+            } else {
+                val onDevice = runCatching {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                }.getOrNull()
+                if (onDevice != null) return Created(onDevice, RecognizerKind.ON_DEVICE)
+                AniLog.w(TAG, "[RECOGNIZER] on-device recogniser refused; using SYSTEM_NETWORK")
+            }
         }
         return runCatching { SpeechRecognizer.createSpeechRecognizer(context) }
             .getOrNull()
             ?.let { Created(it, RecognizerKind.PLATFORM) }
     }
 
-    private fun intentFor(language: Language, partialResults: Boolean): Intent =
+    private fun intentFor(
+        localeTag: String,
+        partialResults: Boolean,
+        endpointing: EndpointingConfig
+    ): Intent =
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language.toLocaleTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
             // Asked for separately from EXTRA_LANGUAGE: some OEM recognisers read only
             // one of the two, and a mismatch is how a Telugu speaker ends up transcribed
             // as if they were speaking American English.
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language.toLocaleTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, localeTag)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, partialResults)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, MAX_ALTERNATIVES)
@@ -265,18 +410,22 @@ class AndroidSpeechRecognizerProvider(
             // gets cut off soonest because their pauses read as silence earlier.
             putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                SILENCE_TIMEOUT_MILLIS
+                endpointing.completeSilenceMillis
             )
             putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                POSSIBLY_COMPLETE_SILENCE_MILLIS
+                endpointing.possiblyCompleteSilenceMillis
             )
             // Keeps the recogniser open for at least this long even if it thinks the
-            // utterance ended immediately, which is the failure mode for a whisper.
-            putExtra(
-                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
-                MINIMUM_SPEECH_MILLIS
-            )
+            // utterance ended immediately, which is the failure mode for a whisper. Zero
+            // means "do not set it", because an extra the recogniser did not ask for is
+            // not the same as one set to zero.
+            if (endpointing.minimumSpeechMillis > 0) {
+                putExtra(
+                    RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
+                    endpointing.minimumSpeechMillis
+                )
+            }
         }
 
     private fun Bundle?.bestResult(isPartial: Boolean): SpeechResult? {
@@ -329,11 +478,5 @@ class AndroidSpeechRecognizerProvider(
         const val MAX_ALTERNATIVES = 3
         const val DEFAULT_CONFIDENCE = 0.5f
 
-        /** Was 1500. A Tanglish sentence routinely contains a pause longer than that. */
-        const val SILENCE_TIMEOUT_MILLIS = 2_500L
-        const val POSSIBLY_COMPLETE_SILENCE_MILLIS = 2_000L
-
-        /** Do not close the microphone before the speaker has had a chance to start. */
-        const val MINIMUM_SPEECH_MILLIS = 2_000L
     }
 }

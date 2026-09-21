@@ -48,6 +48,8 @@ import com.ani.assistant.platform.launch.ForegroundState
 import com.ani.assistant.platform.music.MusicController
 import com.ani.assistant.platform.share.CommunicationLauncher
 import com.ani.assistant.voice.AndroidSpeechRecognizerProvider
+import com.ani.assistant.voice.EndpointingConfig
+import com.ani.assistant.voice.RecognizerBenchmark
 import com.ani.assistant.voice.audio.WakeAudioDiagnostics
 import com.ani.assistant.voice.AndroidTtsProvider
 import com.ani.assistant.voice.SpeechRecognizerProvider
@@ -149,8 +151,38 @@ class AppGraph(private val context: Context) {
 
     // ---- Voice -----------------------------------------------------------------------
 
-    val speechRecognizer: SpeechRecognizerProvider by lazy {
-        AndroidSpeechRecognizerProvider(context)
+    /**
+     * The concrete recogniser.
+     *
+     * Held as the implementation type as well as the interface, because the benchmark and
+     * the Mic Test need the device-specific questions — is on-device recognition
+     * available, which languages does it actually have — that the interface has no
+     * business carrying.
+     */
+    val androidSpeechRecognizer: AndroidSpeechRecognizerProvider by lazy {
+        AndroidSpeechRecognizerProvider(
+            context = context,
+            preferOnDevice = { settingsState.value.preferOnDeviceRecognition },
+            endpointingProvider = {
+                EndpointingConfig(
+                    completeSilenceMillis = settingsState.value.completeSilenceMillis,
+                    possiblyCompleteSilenceMillis = settingsState.value.possiblyCompleteSilenceMillis,
+                    minimumSpeechMillis = settingsState.value.minimumSpeechMillis
+                )
+            }
+        )
+    }
+
+    val speechRecognizer: SpeechRecognizerProvider by lazy { androidSpeechRecognizer }
+
+    /** The A/B recogniser comparison behind Diagnostics. */
+    val recognizerBenchmark: RecognizerBenchmark by lazy {
+        RecognizerBenchmark(
+            provider = androidSpeechRecognizer,
+            arbiter = micArbiter,
+            scope = applicationScope,
+            retainTranscripts = BuildConfig.DEBUG
+        )
     }
 
     val ttsProvider: TtsProvider by lazy { AndroidTtsProvider(context) }

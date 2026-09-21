@@ -4,6 +4,7 @@ import com.ani.assistant.voice.audio.SpeechLevelMonitor
 import com.ani.assistant.voice.audio.SpeechLevelSnapshot
 import com.ani.nlu.text.Language
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 /** Which recogniser actually ran. Never inferred — always reported. */
 enum class RecognizerKind {
@@ -29,9 +30,6 @@ sealed interface SpeechEvent {
     data object ReadyForSpeech : SpeechEvent
     data object BeginningOfSpeech : SpeechEvent
     data object EndOfSpeech : SpeechEvent
-
-    /** Microphone level, 0..1, for the orb animation. */
-    data class AudioLevel(val level: Float) : SpeechEvent
 
     data class Partial(val result: SpeechResult) : SpeechEvent
 
@@ -70,6 +68,18 @@ sealed interface SpeechEvent {
  * TROUBLESHOOTING.md for what this means in practice for a Telugu speaker.
  */
 interface SpeechRecognizerProvider {
+
+    /**
+     * Microphone level, 0..1, for the orb animation.
+     *
+     * Deliberately **not** a [SpeechEvent]. `onRmsChanged` fires ten or more times a
+     * second while a transcript arrives once, so putting both down one channel lets the
+     * disposable traffic queue ahead of the irreplaceable traffic — which either delays
+     * the transcript or, with a bounded buffer, loses it. A `StateFlow` conflates by
+     * nature: a level nobody read is simply overwritten, and the event channel is left
+     * carrying a handful of events per turn where nothing can crowd anything out.
+     */
+    val audioLevel: StateFlow<Float>
 
     /** Whether recognition is possible at all on this device right now. */
     fun isAvailable(): Boolean

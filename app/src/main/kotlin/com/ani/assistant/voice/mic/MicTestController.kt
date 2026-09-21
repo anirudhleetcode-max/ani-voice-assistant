@@ -190,7 +190,6 @@ class MicTestController(
                         is SpeechEvent.ReadyForSpeech -> _state.value.copy(recognizerState = "ready")
                         is SpeechEvent.BeginningOfSpeech -> _state.value.copy(recognizerState = "hearing speech")
                         is SpeechEvent.EndOfSpeech -> _state.value.copy(recognizerState = "end of speech")
-                        is SpeechEvent.AudioLevel -> _state.value.copy(rms = event.level)
                         is SpeechEvent.Partial -> _state.value.copy(
                             lastPartial = if (retainTranscripts) event.result.text else HIDDEN
                         )

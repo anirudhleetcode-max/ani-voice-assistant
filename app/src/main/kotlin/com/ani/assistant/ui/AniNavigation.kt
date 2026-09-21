@@ -28,7 +28,8 @@ enum class AniDestination(
     VOICE_SETTINGS("settings/voice", "Voice", null, false),
     NOTIFICATION_SETTINGS("settings/notifications", "Notification access", null, false),
     KEEP_READY("settings/keep-ready", "Keep Ani Ready", null, false),
-    MIC_TEST("diagnostics/mic-test", "Mic Test", null, false);
+    MIC_TEST("diagnostics/mic-test", "Mic Test", null, false),
+    RECOGNIZER_TEST("diagnostics/recognizer-test", "Speech Recognition Test", null, false);
 
     companion object {
         val bottomBar: List<AniDestination> = entries.filter { it.inBottomBar }

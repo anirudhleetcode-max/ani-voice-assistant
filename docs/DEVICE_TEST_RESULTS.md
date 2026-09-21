@@ -80,6 +80,17 @@ the result in.**
 | "Rey em messages vacchayi" | NOT TESTED | |
 | "Rey Spotify lo Arijit Singh play chey" | NOT TESTED | |
 | No "I didn't catch that" for a mic fault | NOT TESTED | Blocking the mic must produce the microphone message, not the hearing one. |
+| A/B trial A — system, en-IN | NOT TESTED | Record the transcript, not just pass/fail. |
+| A/B trial B — on-device, en-IN | NOT TESTED | |
+| A/B trial C — system, te-IN | NOT TESTED | |
+| A/B trial D — on-device, te-IN | NOT TESTED | |
+| A/B trial E — patient endpointing | NOT TESTED | Compares against the previous build's 2.5 s. |
+| A/B set repeated quietly | NOT TESTED | The comparison that matters against Google Assistant. |
+| Google Assistant, same quiet sentence | NOT TESTED | The benchmark. Record its transcript too. |
+| Latency — endOfSpeechToFinal | NOT TESTED | Sets the endpointing values. |
+| Latency — ttsRequestToAudio | NOT TESTED | Cold vs warm engine. |
+| Latency — total, wake to reply | NOT TESTED | |
+| TTS network voice? | NOT TESTED | `[TTS] networkVoice=`. |
 
 ---
 
@@ -340,6 +351,60 @@ microphone.
 
 **PASS** is Ani saying the microphone is with another app. **FAIL** is "sarigga
 vinapadaledu ra" — that would mean the old bug is back in a new form.
+
+### 31. Recogniser A/B, against Google Assistant
+
+**Diagnostics → Recogniser A/B → Run all trials.** Say the identical sentence at the
+identical volume for each trial. Then say the same sentence to Google Assistant.
+
+Record, for every trial and for Google Assistant:
+
+```
+TRANSCRIPT:
+RECOGNIZER:
+LANGUAGE:
+FIRST PARTIAL (ms):
+FINAL RESULT (ms):
+ERROR:
+```
+
+Repeat the whole set **quietly** — that is the comparison that matters, since Google
+Assistant already passes it on this device.
+
+The decision:
+
+| What you see | Conclusion |
+| --- | --- |
+| Google gets it right, every Ani trial garbles it | Engine or language model. Compare trials B and D — if on-device wins, turn the switch on |
+| One Ani trial matches Google | Use that engine and language |
+| All Ani trials return the right words, Ani still apologises | Not audio, not recognition. Everything after the transcript |
+| Every trial reports the audio verdict NO AUDIO | Handover. Back to test 28 |
+
+### 32. Latency
+
+For every command in test 29, capture the one `[LATENCY]` line:
+
+```bash
+adb logcat -d | grep "\[LATENCY\]"
+```
+
+Fill in:
+
+```
+wakeToListening:
+listeningToFirstPartial:
+endOfSpeechToFinal:
+finalToNLU:
+ttsRequestToAudio:
+total:
+```
+
+`endOfSpeechToFinal` is what sets the endpointing values, and **only** that segment
+justifies changing them. If it does not move when they change, the recogniser is ignoring
+the extras and the delay is elsewhere.
+
+`ttsRequestToAudio` on the *first* reply after a cold start versus the fifth tells you
+whether warm-up is working.
 
 ### Log check
 

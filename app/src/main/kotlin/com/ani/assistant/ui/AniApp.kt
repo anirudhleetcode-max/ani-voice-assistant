@@ -35,6 +35,7 @@ import com.ani.assistant.ui.screens.DiagnosticEntry
 import com.ani.assistant.BuildConfig
 import com.ani.assistant.ui.screens.DiagnosticsScreen
 import com.ani.assistant.ui.screens.MicTestScreen
+import com.ani.assistant.ui.screens.RecognizerTestScreen
 import com.ani.assistant.ui.screens.HistoryScreen
 import com.ani.assistant.ui.screens.HomeScreen
 import com.ani.assistant.ui.screens.KeepReadyScreen
@@ -306,7 +307,25 @@ private fun AniNavHost(
                 entries = diagnostics(),
                 unhandledIntents = unhandledIntents,
                 onRefresh = viewModel::refreshPermissions,
-                onOpenMicTest = { navController.navigate(AniDestination.MIC_TEST.route) }
+                onOpenMicTest = { navController.navigate(AniDestination.MIC_TEST.route) },
+                onOpenRecognizerTest = {
+                    navController.navigate(AniDestination.RECOGNIZER_TEST.route)
+                }
+            )
+        }
+
+        composable(AniDestination.RECOGNIZER_TEST.route) {
+            val benchmark by viewModel.recognizerBenchmark.collectAsStateWithLifecycle()
+            val settings by viewModel.settings.collectAsStateWithLifecycle()
+            RecognizerTestScreen(
+                state = benchmark,
+                showTranscripts = BuildConfig.DEBUG,
+                preferOnDevice = settings.preferOnDeviceRecognition,
+                onRun = viewModel::runRecognizerBenchmark,
+                onStop = viewModel::stopRecognizerBenchmark,
+                onPreferOnDeviceChanged = { prefer ->
+                    viewModel.updateSettings { it.copy(preferOnDeviceRecognition = prefer) }
+                }
             )
         }
 

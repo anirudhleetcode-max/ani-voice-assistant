@@ -49,6 +49,32 @@ data class AniSettings(
     /** Locale tag of the chosen TTS voice, or null for the engine default. */
     val ttsVoiceName: String? = null,
 
+    /**
+     * Whether to use `createOnDeviceSpeechRecognizer` for commands.
+     *
+     * Off by default until the Speech Recognition Test says otherwise on this phone.
+     * On-device recognition removes the network round trip, which is the single largest
+     * latency source when the platform recogniser streams to a server — but it needs a
+     * downloaded language pack and is often worse at code-switched Tanglish. Which is
+     * better is a measurement, not a preference, so this is a switch next to the
+     * benchmark that settles it.
+     */
+    val preferOnDeviceRecognition: Boolean = false,
+
+    /**
+     * Silence after which the recogniser commits, in milliseconds.
+     *
+     * Settings-backed because this value has already been wrong in both directions: the
+     * stock ~1 s cut Tanglish speakers off mid-sentence, and 2.5 s fixed that while
+     * adding a visible delay to every command. `[LATENCY] endOfSpeechToFinal` is the
+     * number to set it from.
+     */
+    val completeSilenceMillis: Long = 1_200L,
+    val possiblyCompleteSilenceMillis: Long = 900L,
+
+    /** Minimum listening time; 0 leaves the extra unset. See EndpointingConfig. */
+    val minimumSpeechMillis: Long = 0L,
+
     // ---- Conversation ------------------------------------------------------------
     /** Keep listening for follow-ups after answering. */
     val autoFollowUp: Boolean = true,

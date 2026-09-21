@@ -48,12 +48,31 @@ interface TtsProvider {
     suspend fun voicesFor(language: Language): List<TtsVoice>
 
     /**
+     * Gets the engine ready to speak [language] without speaking anything.
+     *
+     * Called while the user is still talking, so that binding to the TTS service and
+     * loading a voice — a second or more from cold — happens in parallel with
+     * recognition instead of after it. Doing that work when the reply is already
+     * composed is what produces "the text appeared, then the audio came much later".
+     *
+     * Safe to call repeatedly; a warm engine returns immediately.
+     */
+    suspend fun prepare(language: Language)
+
+    /**
      * Speaks [text] and suspends until it finishes, so the caller can resume listening at
      * the right moment rather than talking over itself.
      *
+     * @param onFirstAudio invoked when audio actually starts playing, which is a
+     *        different moment from when `speak` was called — the gap between the two is
+     *        synthesis, and it is the one worth measuring separately.
      * @return true when the utterance completed, false if it was interrupted or failed
      */
-    suspend fun speak(text: String, language: Language): Boolean
+    suspend fun speak(
+        text: String,
+        language: Language,
+        onFirstAudio: () -> Unit = {}
+    ): Boolean
 
     fun stop()
 

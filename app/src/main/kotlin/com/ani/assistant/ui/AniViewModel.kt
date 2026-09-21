@@ -71,6 +71,13 @@ class AniViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun stopMicTest() = graph.micTestController.stop()
 
+    /** The A/B recogniser comparison. */
+    val recognizerBenchmark = graph.recognizerBenchmark.state
+
+    fun runRecognizerBenchmark() = graph.recognizerBenchmark.run()
+
+    fun stopRecognizerBenchmark() = graph.recognizerBenchmark.stop()
+
     // ---- Settings and data --------------------------------------------------------------
 
     val settings: StateFlow<AniSettings> = graph.settingsRepository.settings

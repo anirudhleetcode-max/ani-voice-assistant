@@ -73,6 +73,14 @@ class VoiceSession(
 
     private var exchangeJob: Job? = null
 
+    /**
+     * Where this turn's milliseconds went.
+     *
+     * One per exchange rather than one per attempt: the user experiences a turn, not an
+     * attempt, and a retry that fixes things is still time they waited.
+     */
+    private val timeline = TurnTimeline()
+
     /** Whether a wake-word loop should pause; true while an exchange is in progress. */
     val isBusy: Boolean get() = _state.value.isActive
 
@@ -119,10 +127,19 @@ class VoiceSession(
     // ---------------------------------------------------------------------------------
 
     private suspend fun runExchange(playChime: Boolean) {
+        timeline.start()
+
         val settings = settingsRepository.settings.first()
         tts.setRate(settings.speechRate)
         tts.setPitch(settings.speechPitch)
         settings.ttsVoiceName?.let { tts.setVoice(it) }
+
+        // Warm the engine now, while the user is still speaking, rather than at the
+        // moment the reply is ready. A cold TextToSpeech costs a second or more to bind
+        // to its service and load a voice, and paying that after the transcript arrives
+        // is exactly the "text appears, then audio much later" gap. Launched rather than
+        // awaited: warming must never delay listening.
+        scope.launch { tts.prepare(settings.language ?: Language.MIXED) }
 
         if (playChime && settings.playActivationSound) {
             _state.value = VoiceState.WAKE_DETECTED
@@ -207,6 +224,7 @@ class VoiceSession(
     private suspend fun listenOnce(language: Language, attempt: Int): AttemptOutcome {
         _state.value = VoiceState.LISTENING
         _partialTranscript.value = ""
+        timeline.mark(TurnStage.COMMAND_LISTENING)
         AniLog.i(TAG, "[PIPELINE] COMMAND_LISTENING", "attempt" to attempt)
 
         var finalText: String? = null
@@ -214,35 +232,52 @@ class VoiceSession(
         var audio = SpeechLevelSnapshot.EMPTY
         var heardAnything = false
 
-        withTimeoutOrNull(LISTEN_TIMEOUT_MILLIS) {
-            recognizer.listen(language, partialResults = true).collect { event ->
-                when (event) {
-                    is SpeechEvent.Started -> AniLog.i(
-                        TAG,
-                        "[PIPELINE] recognizer active",
-                        "kind" to event.kind.name,
-                        "locale" to event.localeTag
-                    )
-                    is SpeechEvent.BeginningOfSpeech -> {
-                        heardAnything = true
-                        AniLog.i(TAG, "[PIPELINE] COMMAND_AUDIO_RECEIVED")
-                    }
-                    is SpeechEvent.AudioLevel -> _audioLevel.value = event.level
-                    is SpeechEvent.Partial -> _partialTranscript.value = event.result.text
-                    is SpeechEvent.Final -> {
-                        finalText = event.result.text
-                        audio = event.audio
-                    }
-                    is SpeechEvent.Failed -> {
-                        failure = event.error
-                        audio = event.audio
-                    }
-                    else -> Unit
-                }
-            }
+        // Levels arrive on their own conflated flow rather than as events, so that ten
+        // updates a second can never queue ahead of the one transcript. Mirrored here
+        // only for the orb.
+        val levelMirror = scope.launch {
+            recognizer.audioLevel.collect { _audioLevel.value = it }
         }
 
-        _audioLevel.value = 0f
+        try {
+            withTimeoutOrNull(LISTEN_TIMEOUT_MILLIS) {
+                recognizer.listen(language, partialResults = true).collect { event ->
+                    when (event) {
+                        is SpeechEvent.Started -> AniLog.i(
+                            TAG,
+                            "[PIPELINE] recognizer active",
+                            "kind" to event.kind.name,
+                            "locale" to event.localeTag
+                        )
+                        is SpeechEvent.ReadyForSpeech -> timeline.mark(TurnStage.RECOGNIZER_READY)
+                        is SpeechEvent.BeginningOfSpeech -> {
+                            heardAnything = true
+                            AniLog.i(TAG, "[PIPELINE] COMMAND_AUDIO_RECEIVED")
+                        }
+                        is SpeechEvent.EndOfSpeech -> timeline.mark(TurnStage.END_OF_SPEECH)
+                        is SpeechEvent.Partial -> {
+                            // The earliest proof the whole chain is alive. If this never
+                            // arrives, nothing downstream is worth looking at.
+                            timeline.mark(TurnStage.FIRST_PARTIAL)
+                            _partialTranscript.value = event.result.text
+                        }
+                        is SpeechEvent.Final -> {
+                            timeline.mark(TurnStage.FINAL_TRANSCRIPT)
+                            finalText = event.result.text
+                            audio = event.audio
+                        }
+                        is SpeechEvent.Failed -> {
+                            failure = event.error
+                            audio = event.audio
+                        }
+                    }
+                }
+            }
+        } finally {
+            levelMirror.cancel()
+            _audioLevel.value = 0f
+        }
+
         val transcript = finalText
 
         AniLog.i(
@@ -301,13 +336,24 @@ class VoiceSession(
             return null
         }
 
+        timeline.mark(TurnStage.NLU_COMPLETE)
         _turns.emit(turn)
         _partialTranscript.value = ""
 
         if (speakAloud && turn.response.isNotBlank()) {
             _state.value = VoiceState.SPEAKING
-            tts.speak(turn.response, turn.command.language)
+            timeline.mark(TurnStage.TTS_REQUESTED)
+            tts.speak(
+                text = turn.response,
+                language = turn.command.language,
+                onFirstAudio = { timeline.mark(TurnStage.TTS_FIRST_AUDIO) }
+            )
+            timeline.mark(TurnStage.TTS_COMPLETE)
         }
+
+        // One line per turn, naming every segment that was reached. This is what makes
+        // "Ani is slow" answerable instead of arguable.
+        AniLog.i(TAG, "[LATENCY] " + timeline.describe())
         return turn
     }
 

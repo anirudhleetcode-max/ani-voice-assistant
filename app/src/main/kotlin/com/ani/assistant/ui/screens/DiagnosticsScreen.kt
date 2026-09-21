@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,6 +46,7 @@ fun DiagnosticsScreen(
     unhandledIntents: List<String>,
     onRefresh: () -> Unit,
     onOpenMicTest: () -> Unit,
+    onOpenRecognizerTest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -59,10 +62,13 @@ fun DiagnosticsScreen(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
         )
 
-        Button(
-            onClick = onOpenMicTest,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.padding(horizontal = 20.dp)
-        ) { Text("Mic Test") }
+        ) {
+            Button(onClick = onOpenMicTest) { Text("Mic Test") }
+            OutlinedButton(onClick = onOpenRecognizerTest) { Text("Recogniser A/B") }
+        }
 
         Text(
             text = "Measures the microphone directly. Run it when Ani says it could not " +
