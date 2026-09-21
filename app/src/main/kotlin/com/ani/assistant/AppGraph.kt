@@ -53,6 +53,8 @@ import com.ani.assistant.voice.AndroidTtsProvider
 import com.ani.assistant.voice.SpeechRecognizerProvider
 import com.ani.assistant.voice.TtsProvider
 import com.ani.assistant.voice.VoiceSession
+import com.ani.assistant.voice.mic.MicArbiter
+import com.ani.assistant.voice.mic.MicTestController
 import com.ani.assistant.voice.wake.PlatformRecognizerWakeEngine
 import com.ani.assistant.voice.wake.PorcupineWakeWordEngine
 import com.ani.assistant.voice.wake.VoskModelStore
@@ -212,13 +214,39 @@ class AppGraph(private val context: Context) {
     suspend fun selectWakeEngine(): WakeWordEngineFactory.Selection =
         wakeEngineFactory.select(settingsState.value.wakeEngine)
 
+    /**
+     * The one gate to the microphone, shared by the wake loop and every command session.
+     *
+     * A single instance for the whole process is the entire point: two arbiters would
+     * arbitrate nothing.
+     */
+    val micArbiter: MicArbiter by lazy { MicArbiter() }
+
+    /**
+     * The developer microphone test.
+     *
+     * Goes through [micArbiter] like everything else — a diagnostic that grabbed the
+     * microphone out from under the wake engine would be creating the fault it exists to
+     * find.
+     */
+    val micTestController: MicTestController by lazy {
+        MicTestController(
+            arbiter = micArbiter,
+            recognizer = speechRecognizer,
+            hasMicrophonePermission = micGranted,
+            scope = applicationScope,
+            retainTranscripts = BuildConfig.DEBUG
+        )
+    }
+
     val voiceSession: VoiceSession by lazy {
         VoiceSession(
             recognizer = speechRecognizer,
             tts = ttsProvider,
             orchestrator = orchestrator,
             settingsRepository = settingsRepository,
-            scope = applicationScope
+            scope = applicationScope,
+            micArbiter = micArbiter
         )
     }
 

@@ -71,12 +71,24 @@ class WakeAudioPipeline(
         private set
 
     /**
+     * Whether the platform still reports this recorder as recording.
+     *
+     * Read straight from `AudioRecord.recordingState` rather than from a flag of our own,
+     * because the question being asked is "has Android actually let go of the
+     * microphone", and only Android can answer that. A flag would answer "did we mean
+     * to", which is what made the handover bug invisible.
+     */
+    val isRecording: Boolean
+        get() = record?.recordingState == AudioRecord.RECORDSTATE_RECORDING
+
+    /**
      * Opens the microphone.
      *
      * @return the negotiated configuration, or null when capture could not be opened —
      *         permission revoked, another app holding the microphone, or no workable rate.
      */
     @SuppressLint("MissingPermission") // The caller gates on RECORD_AUDIO; see VoskWakeWordEngine.
+    @Synchronized
     fun open(): AudioCaptureConfig? {
         close()
 
@@ -127,10 +139,15 @@ class WakeAudioPipeline(
             diagnostics?.onCaptureOpened(negotiated)
             AniLog.i(
                 TAG,
-                "capture open",
+                "[MIC] wake capture open",
                 "source" to AudioCaptureConfig.audioSourceName(source),
                 "rate" to sampleRate,
+                "channels" to 1,
+                "encoding" to "PCM_16BIT",
                 "bufferBytes" to bufferBytes,
+                "minBufferBytes" to minimumBuffer,
+                "readChunkSamples" to readChunkFor(sampleRate),
+                "state" to candidate.state,
                 "agc" to agcOn,
                 "ns" to nsOn
             )
@@ -218,7 +235,15 @@ class WakeAudioPipeline(
         }
     }
 
-    /** Stops and releases everything. Safe to call more than once. */
+    /**
+     * Stops and releases everything. Safe to call more than once, and from any thread.
+     *
+     * Synchronized because the teardown path and the capture loop can both reach it: the
+     * loop closes on its way out, and a caller that is waiting for the microphone closes
+     * defensively. Two threads calling `AudioRecord.release()` on the same object is a
+     * native crash, not a Kotlin exception.
+     */
+    @Synchronized
     fun close() {
         runCatching { automaticGainControl?.release() }
         automaticGainControl = null
@@ -229,7 +254,11 @@ class WakeAudioPipeline(
             runCatching {
                 if (active.recordingState == AudioRecord.RECORDSTATE_RECORDING) active.stop()
             }
+            val stopped = runCatching {
+                active.recordingState != AudioRecord.RECORDSTATE_RECORDING
+            }.getOrDefault(true)
             runCatching { active.release() }
+            AniLog.i(TAG, "[MIC] wake capture closed", "stopped" to stopped)
         }
         record = null
         resampler = null

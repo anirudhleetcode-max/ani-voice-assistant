@@ -6,6 +6,10 @@ import com.ani.assistant.assistant.AniOrchestrator
 import com.ani.assistant.assistant.AniTurn
 import com.ani.assistant.core.log.AniLog
 import com.ani.assistant.data.settings.SettingsRepository
+import com.ani.assistant.voice.audio.AudioVerdict
+import com.ani.assistant.voice.audio.SpeechLevelSnapshot
+import com.ani.assistant.voice.mic.MicAcquisition
+import com.ani.assistant.voice.mic.MicArbiter
 import com.ani.nlu.response.ResponseStyle
 import com.ani.nlu.response.Responses
 import com.ani.nlu.text.Language
@@ -37,7 +41,16 @@ class VoiceSession(
     private val tts: TtsProvider,
     private val orchestrator: AniOrchestrator,
     private val settingsRepository: SettingsRepository,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    /**
+     * The single gate to the microphone.
+     *
+     * Not optional and not a nicety. Without it the orb path opened `SpeechRecognizer`
+     * while the wake engine still held an `AudioRecord`; Android reports no error for
+     * that, the recogniser receives silence, and the user is told "sarigga vinapadatledu
+     * ra" no matter how loudly they speak.
+     */
+    private val micArbiter: MicArbiter = MicArbiter()
 ) {
 
     private val _state = MutableStateFlow(VoiceState.IDLE)
@@ -139,50 +152,144 @@ class VoiceSession(
         _partialTranscript.value = ""
     }
 
-    /** @return the final transcription, or null when nothing usable was heard. */
+    /**
+     * Listens, retrying once, and says something true when it cannot.
+     *
+     * @return the final transcription, or null when nothing usable was heard.
+     */
     private suspend fun captureUtterance(language: Language): String? {
+        var attempt = 0
+
+        while (attempt < RecognitionRetryPolicy.MAX_ATTEMPTS) {
+            attempt++
+
+            // Take the microphone properly. The wake engine is asked to stop and is
+            // *waited for*; if it will not confirm, recognition is not started at all,
+            // because a second recorder over the first one produces silence rather than
+            // an error.
+            val acquired = micArbiter.acquireForCommand()
+            if (acquired !is MicAcquisition.Granted) {
+                AniLog.w(TAG, "[PIPELINE] COMMAND_LISTENING refused", "reason" to (acquired as MicAcquisition.Denied).reason.name)
+                speak(FailureMessage.MICROPHONE_BLOCKED)
+                return null
+            }
+
+            val outcome = try {
+                listenOnce(language, attempt)
+            } finally {
+                micArbiter.releaseCommand()
+            }
+
+            outcome.transcript?.let { return it }
+
+            val decision = RecognitionRetryPolicy.decide(
+                error = outcome.error,
+                verdict = outcome.audio.verdict,
+                attempt = attempt
+            )
+            AniLog.i(
+                TAG,
+                "[COMMAND] attempt failed",
+                "attempt" to attempt,
+                "error" to (outcome.error?.name ?: "none"),
+                "audio" to outcome.audio.describe(),
+                "retry" to decision.retry,
+                "say" to decision.message.name
+            )
+
+            speak(decision.message)
+            if (!decision.retry) return null
+        }
+        return null
+    }
+
+    /** One pass of the recogniser. Owns nothing; the caller holds the microphone. */
+    private suspend fun listenOnce(language: Language, attempt: Int): AttemptOutcome {
         _state.value = VoiceState.LISTENING
         _partialTranscript.value = ""
+        AniLog.i(TAG, "[PIPELINE] COMMAND_LISTENING", "attempt" to attempt)
 
         var finalText: String? = null
         var failure: SpeechError? = null
+        var audio = SpeechLevelSnapshot.EMPTY
+        var heardAnything = false
 
         withTimeoutOrNull(LISTEN_TIMEOUT_MILLIS) {
             recognizer.listen(language, partialResults = true).collect { event ->
                 when (event) {
+                    is SpeechEvent.Started -> AniLog.i(
+                        TAG,
+                        "[PIPELINE] recognizer active",
+                        "kind" to event.kind.name,
+                        "locale" to event.localeTag
+                    )
+                    is SpeechEvent.BeginningOfSpeech -> {
+                        heardAnything = true
+                        AniLog.i(TAG, "[PIPELINE] COMMAND_AUDIO_RECEIVED")
+                    }
                     is SpeechEvent.AudioLevel -> _audioLevel.value = event.level
                     is SpeechEvent.Partial -> _partialTranscript.value = event.result.text
-                    is SpeechEvent.Final -> finalText = event.result.text
-                    is SpeechEvent.Failed -> failure = event.error
+                    is SpeechEvent.Final -> {
+                        finalText = event.result.text
+                        audio = event.audio
+                    }
+                    is SpeechEvent.Failed -> {
+                        failure = event.error
+                        audio = event.audio
+                    }
                     else -> Unit
                 }
             }
         }
 
         _audioLevel.value = 0f
+        val transcript = finalText
 
-        // Copied out of the closure so the null check narrows the type.
-        val transcription = finalText
-        if (transcription != null) return transcription
+        AniLog.i(
+            TAG,
+            "[PIPELINE] COMMAND_RESULT",
+            "hasTranscript" to (transcript != null),
+            "length" to (transcript?.length ?: 0),
+            "beganSpeech" to heardAnything,
+            "audio" to audio.describe()
+        )
 
-        // Silence is not an error worth announcing; everything else is.
-        when (val error = failure) {
-            SpeechError.NO_SPEECH, null -> Unit
-            SpeechError.NOT_UNDERSTOOD -> announce { Responses.didNotCatch(it) }
-            SpeechError.NETWORK -> announce { Responses.noInternet(it) }
-            SpeechError.MICROPHONE_UNAVAILABLE -> announce {
+        return AttemptOutcome(transcript = transcript, error = failure, audio = audio)
+    }
+
+    private data class AttemptOutcome(
+        val transcript: String?,
+        val error: SpeechError?,
+        val audio: SpeechLevelSnapshot
+    )
+
+    /**
+     * Says the one thing that is actually true about this failure.
+     *
+     * Every branch here used to be "I didn't catch that", including the ones where no
+     * audio existed, the permission was missing or another app held the recorder. Telling
+     * someone to speak up when the microphone was never theirs is worse than saying
+     * nothing.
+     */
+    private suspend fun speak(message: FailureMessage) {
+        when (message) {
+            FailureMessage.NONE -> Unit
+            FailureMessage.DID_NOT_CATCH -> announce { Responses.didNotCatch(it) }
+            FailureMessage.SAY_IT_AGAIN -> announce { Responses.sayItAgain(it) }
+            FailureMessage.MICROPHONE_BLOCKED -> announce { Responses.microphoneBusy(it) }
+            FailureMessage.NO_INTERNET -> announce { Responses.noInternet(it) }
+            FailureMessage.PERMISSION_MISSING -> announce {
                 Responses.permissionMissing("Microphone", it)
             }
-            SpeechError.RECOGNIZER_UNAVAILABLE -> announce {
+            FailureMessage.NO_RECOGNIZER -> announce {
                 if (it.speaksTelugu) {
                     "Ee phone lo speech recognition ledu${it.particle}."
                 } else {
                     "This phone has no speech recognition installed."
                 }
             }
-            SpeechError.BUSY, SpeechError.OTHER -> AniLog.d(TAG, "recognition ended", "error" to error)
+            FailureMessage.GENERIC_ERROR -> announce { Responses.somethingWentWrong(it) }
         }
-        return null
     }
 
     private suspend fun processAndSpeak(text: String, speakAloud: Boolean): AniTurn? {

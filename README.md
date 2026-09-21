@@ -90,6 +90,7 @@ Full instructions, including the optional AI backend: [docs/SETUP.md](docs/SETUP
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pipeline fits together and why |
 | [WAKE_WORD.md](docs/WAKE_WORD.md) | The three engines, and why Vosk is the default |
+| [AUDIO_PIPELINE.md](docs/AUDIO_PIPELINE.md) | Microphone → recogniser → transcript: the stages, the log tags, and how to tell which one failed |
 | [DEVICE_TEST_RESULTS.md](docs/DEVICE_TEST_RESULTS.md) | The physical test plan, and what is still untested |
 | [SETUP.md](docs/SETUP.md) | Clone → build → run on a real phone |
 | [PERMISSIONS.md](docs/PERMISSIONS.md) | Every permission, why, and what breaks without it |

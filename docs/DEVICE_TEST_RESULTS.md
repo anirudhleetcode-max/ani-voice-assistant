@@ -61,6 +61,25 @@ the result in.**
 | Display over other apps OFF | NOT TESTED | Expect a notification, and Ani to *say* so. |
 | Mic handover, wake to command | NOT TESTED | Check the `[MIC]` sequence in logcat. |
 | Re-arm after a silent command | NOT TESTED | Say "Rey", then nothing. Ani must hear the next "Rey". |
+| Mic Test — silence | NOT TESTED | Expect NO AUDIO. Record RMS/peak. |
+| Mic Test — whisper | NOT TESTED | Expect LOW AUDIO, **not** NO AUDIO. |
+| Mic Test — normal speech | NOT TESTED | Expect NORMAL AUDIO. |
+| Mic Test — loud speech | NOT TESTED | Expect NORMAL or CLIPPED, clearly above the whisper. |
+| Mic Test — recogniser, app open | NOT TESTED | Record which engine ran and the exact error. |
+| Command, app open, normal | NOT TESTED | The path that failed every time. |
+| Command, app open, quiet | NOT TESTED | |
+| Command, app open, loud | NOT TESTED | |
+| Command via "Rey", normal | NOT TESTED | |
+| Command via "Rey", quiet | NOT TESTED | |
+| Command via "Rey", loud | NOT TESTED | |
+| Command, screen off, normal | NOT TESTED | |
+| Command, screen off, quiet | NOT TESTED | |
+| Command, locked, normal | NOT TESTED | |
+| Command, locked, quiet | NOT TESTED | |
+| "Rey Annayya ki call chey" | NOT TESTED | Record the raw transcript. |
+| "Rey em messages vacchayi" | NOT TESTED | |
+| "Rey Spotify lo Arijit Singh play chey" | NOT TESTED | |
+| No "I didn't catch that" for a mic fault | NOT TESTED | Blocking the mic must produce the microphone message, not the hearing one. |
 
 ---
 
@@ -273,6 +292,54 @@ Say "Rey" and then say nothing at all. Wait for the session to time out. Say "Re
 
 **PASS** is the second "Rey" being heard. Repeat for: saying "Rey" and then something
 Ani cannot act on; saying "Rey" and then walking out of range mid-command.
+
+### 28. Mic Test — is the phone hearing anything at all
+
+**Diagnostics → Mic Test → Level test.** Run it four times and write the numbers down:
+
+| Run | What to do | Expected verdict |
+| --- | --- | --- |
+| A | Say nothing | NO AUDIO |
+| B | Whisper at arm's length | LOW AUDIO |
+| C | Normal conversational voice | NORMAL AUDIO |
+| D | Loud voice | NORMAL or CLIPPED |
+
+**If A, B, C and D all read the same, stop here.** The microphone is not reaching this
+app and nothing downstream matters — check `[MIC]` in the log for a handover that was
+never confirmed. That is the failure this whole change was written for.
+
+Then **Recogniser test**. Note which engine ran (PLATFORM or ON_DEVICE), and the exact
+error constant if it fails. Levels healthy plus `ERROR_NO_MATCH` means capture is fine
+and the recogniser or its language is the problem — a completely different fix.
+
+### 29. The command paths, at three volumes
+
+Nine runs. For each, capture `[MIC]`, `[AUDIO]`, `[COMMAND]`, `[PIPELINE]`:
+
+1. app open, normal / quiet / loud
+2. "Rey" then the command, normal / quiet / loud
+3. screen off, and locked, normal / quiet
+
+Say the real commands, not test phrases:
+
+```
+Rey Annayya ki call chey
+Rey em messages vacchayi
+Rey Spotify lo Arijit Singh play chey
+```
+
+A pass is the full chain: `[PIPELINE] COMMAND_AUDIO_RECEIVED` → `COMMAND_RESULT` with a
+transcript → `[NLU] classified` with the right intent → `[ACTION] execution started` →
+`activity launch SUCCESS` or a deferral Ani correctly described. "It said something" is
+not a pass.
+
+### 30. The microphone message is honest
+
+Start a command, and while Ani is listening start a voice recorder app to take the
+microphone.
+
+**PASS** is Ani saying the microphone is with another app. **FAIL** is "sarigga
+vinapadaledu ra" — that would mean the old bug is back in a new form.
 
 ### Log check
 

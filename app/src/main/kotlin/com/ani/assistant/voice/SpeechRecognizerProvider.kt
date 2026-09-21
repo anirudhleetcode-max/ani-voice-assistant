@@ -1,19 +1,58 @@
 package com.ani.assistant.voice
 
+import com.ani.assistant.voice.audio.SpeechLevelMonitor
+import com.ani.assistant.voice.audio.SpeechLevelSnapshot
 import com.ani.nlu.text.Language
 import kotlinx.coroutines.flow.Flow
 
+/** Which recogniser actually ran. Never inferred — always reported. */
+enum class RecognizerKind {
+    /** `SpeechRecognizer.createSpeechRecognizer` — usually Google's, usually networked. */
+    PLATFORM,
+
+    /** `SpeechRecognizer.createOnDeviceSpeechRecognizer`, API 33+. */
+    ON_DEVICE
+}
+
 /** One streaming recognition attempt. */
 sealed interface SpeechEvent {
+
+    /**
+     * Emitted before anything else, naming the recogniser that is about to run.
+     *
+     * Exists because a silent fallback between the on-device and the networked recogniser
+     * makes a failure impossible to diagnose: the two behave differently for Telugu, and
+     * "which one ran" is the first question worth asking.
+     */
+    data class Started(val kind: RecognizerKind, val localeTag: String) : SpeechEvent
+
     data object ReadyForSpeech : SpeechEvent
     data object BeginningOfSpeech : SpeechEvent
+    data object EndOfSpeech : SpeechEvent
 
     /** Microphone level, 0..1, for the orb animation. */
     data class AudioLevel(val level: Float) : SpeechEvent
 
     data class Partial(val result: SpeechResult) : SpeechEvent
-    data class Final(val result: SpeechResult) : SpeechEvent
-    data class Failed(val error: SpeechError) : SpeechEvent
+
+    data class Final(
+        val result: SpeechResult,
+        /** What the level did while this was captured. Advisory; see [SpeechLevelMonitor]. */
+        val audio: SpeechLevelSnapshot = SpeechLevelSnapshot.EMPTY
+    ) : SpeechEvent
+
+    data class Failed(
+        val error: SpeechError,
+        /**
+         * What the level did before it failed.
+         *
+         * This is what separates "you spoke too quietly" from "nothing reached the
+         * microphone" — two failures that used to produce the same apology.
+         */
+        val audio: SpeechLevelSnapshot = SpeechLevelSnapshot.EMPTY,
+        /** The platform's own error constant, for the log. */
+        val platformCode: Int? = null
+    ) : SpeechEvent
 }
 
 /**

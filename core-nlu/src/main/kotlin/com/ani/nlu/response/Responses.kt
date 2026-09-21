@@ -267,6 +267,27 @@ object Responses {
         if (tel(style)) "Sariga vinapadaledu${style.particle}, malli cheppu."
         else "I didn't catch that — say it again?"
 
+    /**
+     * For the second empty attempt in a row.
+     *
+     * Deliberately different from [didNotCatch]: hearing the same sentence twice makes an
+     * assistant sound broken, and this one asks rather than apologises.
+     */
+    fun sayItAgain(style: ResponseStyle): String =
+        if (tel(style)) "Inkosari cheppu${style.particle}, nenu vintunna."
+        else "Once more — I'm listening."
+
+    /**
+     * When the microphone produced nothing because something else had it.
+     *
+     * Never phrased as "I didn't hear you". The user was not the problem, they were not
+     * quiet, and saying it again will not help — so the message says what actually
+     * happened instead of asking them to repeat themselves.
+     */
+    fun microphoneBusy(style: ResponseStyle): String =
+        if (tel(style)) "Microphone inko app daggara undi${style.particle}. Nuvvu cheppindi naaku vinapadaledu."
+        else "Something else has the microphone, so nothing reached me."
+
     fun didNotUnderstand(style: ResponseStyle): String =
         if (tel(style)) "Ardham kaaledu${style.particle}, malli cheppu."
         else "I didn't understand that."

@@ -132,6 +132,9 @@ dependencies {
     testCompileOnly("org.jetbrains.compose.runtime:runtime-desktop:1.7.3")
 
     testImplementation("junit:junit:4.13.2")
+    // The microphone arbiter is a suspending API, so its tests need runTest. Same
+    // version the app module uses, from Maven Central.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("com.ani:core-nlu")
     testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     testCompileOnly("org.robolectric:android-all:15-robolectric-12650502")

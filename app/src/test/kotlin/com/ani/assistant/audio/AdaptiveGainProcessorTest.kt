@@ -284,4 +284,72 @@ class AdaptiveGainProcessorTest {
         processor.process(buffer, length = 32)
         assertEquals("the tail must be left untouched", 9000, buffer[100].toInt())
     }
+    @Test
+    fun `the most negative sample cannot overflow the peak`() {
+        // abs(-32768) is 32768, which does not fit a signed 16-bit range. Computing the
+        // peak naively either wraps to a negative number or reports a level that cannot
+        // exist, and both read as "clipping" to anything downstream.
+        val processor = AdaptiveGainProcessor(GainConfig())
+        val block = ShortArray(320) { Short.MIN_VALUE }
+
+        val stats = processor.process(block, block.size)
+
+        assertTrue("peak must stay inside the 16-bit range", stats.outputPeak <= 32767)
+        assertTrue(stats.outputPeak >= 0)
+        for (sample in block) {
+            assertTrue(sample >= Short.MIN_VALUE)
+        }
+    }
+
+    @Test
+    fun `a single most-negative sample among quiet speech does not blow up the peak`() {
+        val processor = AdaptiveGainProcessor(GainConfig())
+        val block = ShortArray(320) { index ->
+            (600.0 * sin(2.0 * PI * 220.0 * index / 16_000.0)).toInt().toShort()
+        }
+        block[100] = Short.MIN_VALUE
+
+        val stats = processor.process(block, block.size)
+
+        assertTrue(stats.outputPeak in 0..32767)
+    }
+
+    @Test
+    fun `a quiet speech-like sine reaches a usable level`() {
+        // 220 Hz at about -40 dBFS: roughly what a whisper at arm's length looks like.
+        val processor = AdaptiveGainProcessor(GainConfig())
+        val amplitude = 300.0
+        var lastRms = 0f
+
+        // Several blocks, because the gain rises gradually rather than jumping.
+        repeat(40) { block ->
+            val samples = ShortArray(320) { index ->
+                val n = block * 320 + index
+                (amplitude * sin(2.0 * PI * 220.0 * n / 16_000.0)).toInt().toShort()
+            }
+            lastRms = processor.process(samples, samples.size).inputRms
+            assertTrue(samples.all { it.toInt() in -32768..32767 })
+        }
+
+        assertTrue("the quiet input should be recognised as quiet", lastRms < 1000f)
+        assertTrue(
+            "a whisper should end up amplified",
+            processor.lastStats.appliedGain > 1.5f
+        )
+    }
+
+    @Test
+    fun `an already-clipped input is not amplified further`() {
+        val processor = AdaptiveGainProcessor(GainConfig())
+        val block = ShortArray(320) { index ->
+            if (index % 2 == 0) Short.MAX_VALUE else Short.MIN_VALUE
+        }
+
+        repeat(10) { processor.process(block.copyOf(), block.size) }
+        val stats = processor.process(block.copyOf(), block.size)
+
+        assertEquals(1f, stats.appliedGain, 0.001f)
+        assertTrue(stats.outputPeak <= 32767)
+    }
+
 }

@@ -190,6 +190,11 @@ class MicLifecycle(
             MicStage.WAKE_LISTENING to MicEvent.WAKE_DETECTED -> MicStage.WAKE_DETECTED
             MicStage.WAKE_DETECTED to MicEvent.WAKE_AUDIO_RELEASED -> MicStage.WAKE_AUDIO_RELEASE
 
+            // No wake phrase was involved: the user tapped the orb, so the wake engine is
+            // asked to let go mid-listen. Without this the tap path had no handover at
+            // all — it started a second recorder on top of the first one.
+            MicStage.WAKE_LISTENING to MicEvent.WAKE_AUDIO_RELEASED -> MicStage.WAKE_AUDIO_RELEASE
+
             MicStage.WAKE_AUDIO_RELEASE to MicEvent.COMMAND_LISTENING_STARTED -> MicStage.COMMAND_LISTENING
             MicStage.COMMAND_LISTENING to MicEvent.COMMAND_CAPTURED -> MicStage.PROCESSING
 

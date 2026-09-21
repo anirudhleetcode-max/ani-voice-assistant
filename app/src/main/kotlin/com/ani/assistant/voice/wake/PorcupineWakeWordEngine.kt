@@ -155,6 +155,23 @@ class PorcupineWakeWordEngine(
     }
 
     /**
+     * Stops Porcupine and confirms it.
+     *
+     * `PorcupineManager.stop()` is synchronous — it joins its own audio thread before
+     * returning — so unlike the Vosk and platform engines there is nothing to wait for
+     * here beyond the call itself. The confirmation is that `stop()` and `delete()` both
+     * returned without throwing; there is no state to query afterwards.
+     */
+    override suspend fun releaseAndAwait(timeoutMillis: Long): Boolean {
+        val stopped = runCatching { manager?.stop() }.isSuccess
+        val deleted = runCatching { manager?.delete() }.isSuccess
+        manager = null
+        val released = stopped && deleted
+        AniLog.i(TAG, "[MIC] porcupine release", "released" to released)
+        return released
+    }
+
+    /**
      * Copies the bundled keyword out of assets, because Porcupine needs a real file path.
      * Returns null when no keyword file was bundled.
      */

@@ -56,6 +56,21 @@ class AniViewModel(private val graph: AppGraph) : ViewModel() {
     /** The live exchange, newest last. Separate from stored history. */
     val transcript: StateFlow<List<TranscriptLine>> = _transcript.asStateFlow()
 
+    /** Live microphone diagnostics. Levels and states only; never audio. */
+    val micTest = graph.micTestController.state
+
+    fun runMicLevelTest() {
+        graph.micTestController.refreshPermission()
+        graph.micTestController.startLevelTest()
+    }
+
+    fun runMicRecognizerTest() {
+        graph.micTestController.refreshPermission()
+        graph.micTestController.startRecognizerTest()
+    }
+
+    fun stopMicTest() = graph.micTestController.stop()
+
     // ---- Settings and data --------------------------------------------------------------
 
     val settings: StateFlow<AniSettings> = graph.settingsRepository.settings

@@ -118,5 +118,28 @@ interface WakeWordEngine {
      */
     fun setPaused(paused: Boolean)
 
+    /**
+     * Releases the microphone and does not return until it is genuinely free.
+     *
+     * The plain [release] is fire-and-forget: it asks the capture loop to stop and
+     * returns, which reads as "done" while a blocking `AudioRecord.read` on another
+     * thread is still in flight. Starting `SpeechRecognizer` in that window gets a
+     * recorder that opens without error and delivers silence, so recognition ends in
+     * `ERROR_NO_MATCH` and the user is told they were not heard clearly when in fact they
+     * were not heard at all.
+     *
+     * @return true when the recorder is confirmed stopped. **A caller that gets false
+     *         must not start a second recorder** — it must report a microphone problem.
+     */
+    suspend fun releaseAndAwait(timeoutMillis: Long = DEFAULT_RELEASE_TIMEOUT_MILLIS): Boolean {
+        release()
+        return true
+    }
+
     fun release()
+
+    companion object {
+        /** Long enough for an orderly unwind of a 20 ms read loop, many times over. */
+        const val DEFAULT_RELEASE_TIMEOUT_MILLIS = 1_000L
+    }
 }

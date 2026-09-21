@@ -43,6 +43,7 @@ fun DiagnosticsScreen(
     entries: List<DiagnosticEntry>,
     unhandledIntents: List<String>,
     onRefresh: () -> Unit,
+    onOpenMicTest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -56,6 +57,20 @@ fun DiagnosticsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+        )
+
+        Button(
+            onClick = onOpenMicTest,
+            modifier = Modifier.padding(horizontal = 20.dp)
+        ) { Text("Mic Test") }
+
+        Text(
+            text = "Measures the microphone directly. Run it when Ani says it could not " +
+                "hear you — it shows whether audio reached the phone at all, which is a " +
+                "different question from whether the words were understood.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
         )
 
         SectionHeader("Status")

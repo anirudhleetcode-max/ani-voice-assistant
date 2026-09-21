@@ -14,6 +14,9 @@ import com.ani.assistant.voice.audio.WakeAudioPipeline
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.vosk.LogLevel
 import org.vosk.LibVosk
 import org.vosk.Model
@@ -75,6 +78,17 @@ class VoskWakeWordEngine(
     /** Set false to unwind the capture loop from outside it. */
     @Volatile
     private var capturing: Boolean = false
+
+    /**
+     * Counted down by the capture thread once it has closed the recorder.
+     *
+     * The whole point of the handover bug is that "we asked it to stop" and "it stopped"
+     * are different facts, and only the capture thread knows the second one. A latch is
+     * the smallest thing that can carry that answer back to a caller that is about to
+     * open a second recorder.
+     */
+    @Volatile
+    private var captureFinished: CountDownLatch? = null
 
     /**
      * True when the wake phrase was not in the model's vocabulary and detection fell back
@@ -147,6 +161,8 @@ class VoskWakeWordEngine(
         }
 
         val activeRecognizer = recognizer
+        val finished = CountDownLatch(1)
+        captureFinished = finished
         capturing = true
 
         // The read loop blocks, so it gets its own thread rather than stalling a
@@ -178,6 +194,12 @@ class VoskWakeWordEngine(
                 AniLog.e(TAG, "capture loop failed", error)
                 diagnostics?.onCaptureError("The microphone stopped unexpectedly.")
             } finally {
+                // The recorder is closed *by the thread that was reading it*. Closing an
+                // AudioRecord from another thread while this one is blocked inside
+                // read() is a native crash waiting to happen, and it is also what let
+                // the microphone look free while it was not.
+                runCatching { audio.close() }
+                finished.countDown()
                 close()
             }
         }
@@ -194,11 +216,14 @@ class VoskWakeWordEngine(
             capturing = false
             captureJob.cancel()
             pipeline = null
+            // Idempotent, and a no-op when the capture thread already closed it. It is
+            // here for the case where the loop never started at all.
             runCatching { audio.close() }
+            finished.countDown()
             runCatching { activeRecognizer.close() }
             runCatching { model.close() }
             diagnostics?.onCaptureClosed()
-            AniLog.i(TAG, "wake engine stopped")
+            AniLog.i(TAG, "[WAKE] engine stopped")
         }
     }
 
@@ -288,6 +313,48 @@ class VoskWakeWordEngine(
         capturing = false
         runCatching { pipeline?.close() }
         pipeline = null
+    }
+
+    /**
+     * Stops capture and waits for the recorder to actually be closed.
+     *
+     * This is the method the microphone handover depends on. [release] asks; this one
+     * confirms, and returns false rather than letting a caller open `SpeechRecognizer`
+     * over a recorder that Android still has open — which does not throw, delivers
+     * silence, and surfaces as `ERROR_NO_MATCH`.
+     */
+    override suspend fun releaseAndAwait(timeoutMillis: Long): Boolean {
+        val latch = captureFinished
+        val active = pipeline
+        capturing = false
+
+        val drained = if (latch == null) {
+            true
+        } else {
+            // await() blocks, so it goes on IO. The wait is bounded and normally tens of
+            // milliseconds: reads are 20 ms, so the loop notices `capturing` almost at
+            // once.
+            withContext(Dispatchers.IO) { latch.await(timeoutMillis, TimeUnit.MILLISECONDS) }
+        }
+
+        runCatching { active?.close() }
+        pipeline = null
+        captureFinished = null
+
+        val stillRecording = active?.isRecording == true
+        val released = drained && !stillRecording
+
+        AniLog.i(
+            TAG,
+            "[MIC] wake microphone release",
+            "drained" to drained,
+            "stillRecording" to stillRecording,
+            "released" to released
+        )
+        if (!released) {
+            AniLog.w(TAG, "[MIC] wake engine did not confirm release within the timeout")
+        }
+        return released
     }
 
     private companion object {

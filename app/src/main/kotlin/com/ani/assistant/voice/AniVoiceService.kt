@@ -21,8 +21,11 @@ import com.ani.assistant.voice.mic.MicEvent
 import com.ani.assistant.voice.mic.MicLifecycle
 import com.ani.assistant.voice.mic.MicStage
 import com.ani.assistant.voice.mic.MicStageBus
+import com.ani.assistant.voice.mic.WakeMicrophoneOwner
 import com.ani.assistant.voice.wake.WakeWordEngine
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
@@ -70,12 +73,37 @@ class AniVoiceService : LifecycleService() {
         )
     }
 
+    /** The engine currently holding the microphone, so it can be told to let go. */
+    @Volatile
+    private var activeEngine: WakeWordEngine? = null
+
+    /**
+     * How anything else in the app takes the microphone away from the wake engine.
+     *
+     * The orb is the case that was broken: tapping it called `startListening` directly
+     * while this service still had an `AudioRecord` open. Android does not complain, the
+     * recogniser gets silence, and Ani told the user it could not hear them clearly.
+     */
+    private val wakeOwner = WakeMicrophoneOwner { timeoutMillis ->
+        val engine = activeEngine
+        if (engine == null) {
+            // Nothing is recording, so nothing has to stop.
+            true
+        } else {
+            AniLog.i(TAG, "[MIC] wake engine asked to release for a command")
+            val released = engine.releaseAndAwait(timeoutMillis)
+            if (released) mic.on(MicEvent.WAKE_AUDIO_RELEASED)
+            released
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
         // The tool layer reports ACTION_STARTED / ACTION_FINISHED through here, because
         // the code that launches a call has no idea a wake word started it.
         MicStageBus.install(mic::on)
+        AniApplication.graphOrNull(applicationContext)?.micArbiter?.registerWakeOwner(wakeOwner)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -171,13 +199,21 @@ class AniVoiceService : LifecycleService() {
 
                 ServiceState.setWakeEngineReady(true)
 
-                if (!mic.canStartWakeEngine()) {
-                    // An exchange is still winding down. Starting the wake engine now
-                    // would open a second recorder on top of the command recogniser,
-                    // which is the race this machine exists to make impossible.
-                    AniLog.w(TAG, "[WAKE] re-arm deferred", "stage" to mic.stage.name)
+                // Somebody else has the microphone — an exchange this service started, or
+                // the orb. Opening a recorder now is the bug, not a race to win.
+                if (graph.micArbiter.commandHoldsMicrophone.value || graph.voiceSession.isBusy) {
+                    AniLog.i(TAG, "[WAKE] re-arm deferred; a command holds the microphone")
                     delay(SHORT_BACKOFF_MILLIS)
                     continue
+                }
+
+                // Nothing is recording and nothing is talking, so whatever stage the
+                // machine was left in by an exchange that ended somewhere else — the orb
+                // path finishes inside VoiceSession, not here — is over. Closing it out
+                // rather than waiting for an event that is not coming is what stops a
+                // half-finished exchange leaving Ani permanently deaf.
+                if (!mic.canStartWakeEngine()) {
+                    mic.on(MicEvent.EXCHANGE_ENDED)
                 }
 
                 mic.on(MicEvent.WAKE_ENGINE_STARTED)
@@ -216,6 +252,8 @@ class AniVoiceService : LifecycleService() {
         engine: WakeWordEngine
     ): Boolean {
         var detection: com.ani.assistant.voice.wake.WakeDetection? = null
+        var microphoneHandedOver = false
+        activeEngine = engine
 
         try {
             engine.detections().collect { candidate ->
@@ -230,14 +268,32 @@ class AniVoiceService : LifecycleService() {
         } catch (signal: WakeDetectedSignal) {
             // Expected: this is how the collector stops.
         } finally {
-            // release() closes the AudioRecord. Announcing it as a stage rather than
-            // assuming it is what stops the command recogniser from asking for a
-            // microphone the wake engine has not finished letting go of.
-            engine.release()
-            if (detection != null) mic.on(MicEvent.WAKE_AUDIO_RELEASED)
+            // Wait for the recorder to actually close, rather than asking it to and
+            // carrying on. "We called release()" and "Android has let go of the
+            // microphone" are different facts, and only the second one makes it safe to
+            // start SpeechRecognizer.
+            val released = withContext(NonCancellable) {
+                engine.releaseAndAwait(WakeWordEngine.DEFAULT_RELEASE_TIMEOUT_MILLIS)
+            }
+            activeEngine = null
+            if (released) {
+                mic.on(MicEvent.WAKE_AUDIO_RELEASED)
+            } else {
+                AniLog.e(TAG, "[MIC] wake engine would not release the microphone")
+                ServiceState.setLastError("Ani could not hand the microphone over.")
+            }
+            microphoneHandedOver = released
         }
 
         val wake = detection ?: return false
+
+        if (!microphoneHandedOver) {
+            // Starting the command recogniser here is what produced silence and a
+            // misleading "I didn't catch that". Better to lose this wake than to lie
+            // about why the command failed.
+            AniLog.w(TAG, "[WAKE] detection abandoned: microphone not free")
+            return false
+        }
 
         ServiceState.setLastWake(wake.atEpochMillis)
         AniLog.i(
@@ -365,6 +421,8 @@ class AniVoiceService : LifecycleService() {
     override fun onDestroy() {
         mic.on(MicEvent.SERVICE_STOPPED)
         MicStageBus.clear()
+        activeEngine = null
+        AniApplication.graphOrNull(applicationContext)?.micArbiter?.unregisterWakeOwner()
         wakeJob?.cancel()
         wakeJob = null
         releaseWakeLock()

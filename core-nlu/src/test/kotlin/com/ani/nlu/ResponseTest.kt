@@ -9,6 +9,7 @@ import com.ani.nlu.text.TextNormalizer
 import com.ani.nlu.time.TeluguTimeParser
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class ResponseTest {
@@ -96,4 +97,24 @@ class ResponseTest {
         assertEquals("62 percent undi ra.", Responses.batteryLevel(62, charging = false, friendly))
         assertTrue(Responses.batteryLevel(62, charging = true, friendly).contains("charge"))
     }
+    @Test
+    fun `a microphone problem is never phrased as a hearing problem`() {
+        // The distinction the audio bug turned on. "I didn't catch that" tells the user
+        // to speak up; when another recorder had the microphone, speaking up does
+        // nothing and the message is simply false.
+        val telugu = Responses.microphoneBusy(friendly)
+        val inEnglish = Responses.microphoneBusy(english)
+
+        assertTrue(telugu.contains("Microphone"))
+        assertNotEquals(Responses.didNotCatch(friendly), telugu)
+        assertTrue(inEnglish.isNotBlank())
+        assertNotEquals(Responses.didNotCatch(english), inEnglish)
+    }
+
+    @Test
+    fun `the second ask is worded differently from the first`() {
+        // Hearing the identical apology twice makes an assistant sound stuck.
+        assertNotEquals(Responses.didNotCatch(friendly), Responses.sayItAgain(friendly))
+    }
+
 }

@@ -63,10 +63,25 @@ class PlatformRecognizerWakeEngine(
         else -> WakeEngineAvailability.Ready
     }
 
+    /**
+     * True while an inner `listen` collection is running.
+     *
+     * This engine does not own an `AudioRecord` directly — `SpeechRecognizer` does, on
+     * its behalf — so "has the microphone been handed back" means "has that collection
+     * finished". Nothing else can answer it.
+     */
+    @Volatile
+    private var listening: Boolean = false
+
+    /** Set by [releaseAndAwait] to unwind the loop from outside it. */
+    @Volatile
+    private var released: Boolean = false
+
     override fun detections(): Flow<WakeDetection> = flow {
         var consecutiveFailures = 0
+        released = false
 
-        while (currentCoroutineContext().isActive) {
+        while (currentCoroutineContext().isActive && !released) {
             if (paused) {
                 delay(PAUSE_POLL_MILLIS)
                 continue
@@ -81,6 +96,7 @@ class PlatformRecognizerWakeEngine(
             var failure: SpeechError? = null
 
             try {
+                listening = true
                 recognizer.listen(languageProvider(), partialResults = true).collect { event ->
                     when (event) {
                         // Reacting to partials means Ani wakes the instant "Rey" is heard
@@ -100,7 +116,11 @@ class PlatformRecognizerWakeEngine(
             } catch (error: Exception) {
                 AniLog.w(TAG, "wake loop iteration failed", "type" to error.javaClass.simpleName)
                 failure = SpeechError.OTHER
+            } finally {
+                listening = false
             }
+
+            if (released) return@flow
 
             val hit = detected
             if (hit != null && !paused) {
@@ -123,7 +143,32 @@ class PlatformRecognizerWakeEngine(
         this.paused = paused
     }
 
-    override fun release() = Unit
+    override fun release() {
+        released = true
+        paused = true
+    }
+
+    /**
+     * Stops and waits for the in-flight recognition to finish.
+     *
+     * `SpeechRecognizer` holds the microphone on this engine's behalf, and its teardown
+     * is asynchronous — `destroy()` posts to the main thread. Returning before that
+     * completes is how a command recogniser ends up opening a second recorder over a
+     * live one, which Android accepts silently and then feeds silence.
+     */
+    override suspend fun releaseAndAwait(timeoutMillis: Long): Boolean {
+        release()
+
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (listening && System.currentTimeMillis() < deadline) {
+            delay(RELEASE_POLL_MILLIS)
+        }
+
+        val free = !listening
+        AniLog.i(TAG, "[MIC] platform wake release", "released" to free)
+        if (!free) AniLog.w(TAG, "[MIC] platform recogniser still listening after the timeout")
+        return free
+    }
 
     private fun com.ani.nlu.dialog.WakeMatch.toDetection(): WakeDetection? {
         if (!matched) return null
@@ -140,6 +185,9 @@ class PlatformRecognizerWakeEngine(
         const val LONG_BACKOFF_MILLIS = 5_000L
         const val MICROPHONE_BUSY_BACKOFF_MILLIS = 10_000L
         const val PAUSE_POLL_MILLIS = 250L
+
+        /** How often to re-check that the recogniser has finished letting go. */
+        const val RELEASE_POLL_MILLIS = 20L
         const val FAILURE_BACKOFF_THRESHOLD = 5
     }
 }

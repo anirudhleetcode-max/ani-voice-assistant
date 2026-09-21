@@ -32,7 +32,9 @@ import com.ani.assistant.platform.device.RestrictionCheck
 import com.ani.assistant.voice.wake.WakeWordEngineId
 import com.ani.assistant.ui.screens.CommandsScreen
 import com.ani.assistant.ui.screens.DiagnosticEntry
+import com.ani.assistant.BuildConfig
 import com.ani.assistant.ui.screens.DiagnosticsScreen
+import com.ani.assistant.ui.screens.MicTestScreen
 import com.ani.assistant.ui.screens.HistoryScreen
 import com.ani.assistant.ui.screens.HomeScreen
 import com.ani.assistant.ui.screens.KeepReadyScreen
@@ -303,7 +305,19 @@ private fun AniNavHost(
             DiagnosticsScreen(
                 entries = diagnostics(),
                 unhandledIntents = unhandledIntents,
-                onRefresh = viewModel::refreshPermissions
+                onRefresh = viewModel::refreshPermissions,
+                onOpenMicTest = { navController.navigate(AniDestination.MIC_TEST.route) }
+            )
+        }
+
+        composable(AniDestination.MIC_TEST.route) {
+            val micTest by viewModel.micTest.collectAsStateWithLifecycle()
+            MicTestScreen(
+                state = micTest,
+                showTranscripts = BuildConfig.DEBUG,
+                onRunLevelTest = viewModel::runMicLevelTest,
+                onRunRecognizerTest = viewModel::runMicRecognizerTest,
+                onStop = viewModel::stopMicTest
             )
         }
 

@@ -280,4 +280,44 @@ class MicLifecycleTest {
             seen
         )
     }
+    // ---------------------------------------------------------------------------------
+    // The orb: a command that never involved a wake phrase
+    // ---------------------------------------------------------------------------------
+
+    @Test
+    fun `tapping the orb takes the microphone from a listening wake engine`() {
+        // The path that had no handover at all. The wake engine is mid-listen and is
+        // asked to let go, with no detection involved.
+        run(MicEvent.WAKE_ENGINE_STARTED)
+        assertEquals(MicOwner.WAKE_ENGINE, mic.owner)
+
+        run(MicEvent.WAKE_AUDIO_RELEASED)
+
+        assertEquals(MicStage.WAKE_AUDIO_RELEASE, mic.stage)
+        assertEquals(MicOwner.NONE, mic.owner)
+        assertTrue(mic.canStartCommandRecognizer())
+    }
+
+    @Test
+    fun `an orb exchange that ends elsewhere still re-arms`() {
+        // The orb path finishes inside VoiceSession, not in the service, so no component
+        // emits the events that would normally walk the machine home. The service closes
+        // it out once nothing holds the microphone; this is that closing-out.
+        run(
+            MicEvent.WAKE_ENGINE_STARTED,
+            MicEvent.WAKE_AUDIO_RELEASED,
+            MicEvent.COMMAND_LISTENING_STARTED
+        )
+
+        assertTrue(mic.on(MicEvent.EXCHANGE_ENDED))
+        assertEquals(MicStage.WAKE_REARM, mic.stage)
+        assertTrue(mic.canStartWakeEngine())
+    }
+
+    @Test
+    fun `a wake engine asked to release before it started is a harmless no-op`() {
+        assertTrue(mic.on(MicEvent.WAKE_AUDIO_RELEASED))
+        assertEquals(MicStage.IDLE, mic.stage)
+    }
+
 }

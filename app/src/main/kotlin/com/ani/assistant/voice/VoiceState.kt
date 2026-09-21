@@ -52,8 +52,16 @@ enum class SpeechError {
     /** The recogniser needs the network and it is not there. */
     NETWORK,
 
-    /** RECORD_AUDIO is not granted, or another app holds the microphone. */
+    /**
+     * The recogniser could not get audio.
+     *
+     * Usually another recorder is open — including one of Ani's own. Kept separate from
+     * [PERMISSION_MISSING] because the remedy is completely different.
+     */
     MICROPHONE_UNAVAILABLE,
+
+    /** RECORD_AUDIO is not granted. */
+    PERMISSION_MISSING,
 
     /** No speech recognition service is installed on the device at all. */
     RECOGNIZER_UNAVAILABLE,
