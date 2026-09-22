@@ -75,12 +75,15 @@ class AssistantRoleManager(private val context: Context) {
 
     /** Everything the platform will tell us, in one read. */
     fun report(): AssistantRoleReport {
-        val sdkInt = Build.VERSION.SDK_INT
-        val role = if (sdkInt >= Build.VERSION_CODES.Q) {
+        // Compared against Build.VERSION.SDK_INT directly rather than through a local.
+        // Lint's version-check analysis only follows the former, and a check it cannot
+        // follow is a check it reports as missing.
+        val role = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             readRole()
         } else {
             RoleReading(available = false, held = false)
         }
+        val sdkInt = Build.VERSION.SDK_INT
 
         val roleApiAvailable = role.available
         val roleHeld = role.held
