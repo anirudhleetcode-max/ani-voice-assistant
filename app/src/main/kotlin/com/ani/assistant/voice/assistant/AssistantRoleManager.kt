@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.annotation.RequiresApi
 import com.ani.assistant.core.log.AniLog
 
 /**
@@ -39,22 +40,50 @@ class AssistantRoleManager(private val context: Context) {
         context.packageManager.queryIntentServices(intent, 0).isNotEmpty()
     }.getOrDefault(false)
 
+    /**
+     * What `RoleManager` says, or nulls before API 29.
+     *
+     * Split out and annotated rather than guarded inline with a constant of our own,
+     * because lint can only verify a version check written against
+     * [Build.VERSION_CODES]. A guard it cannot read is a guard it will flag, and
+     * suppressing that would have thrown away a genuine check for the sake of quiet.
+     */
+    private data class RoleReading(val available: Boolean, val held: Boolean)
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun readRole(): RoleReading {
+        val roleManager = runCatching { context.getSystemService(RoleManager::class.java) }
+            .getOrNull() ?: return RoleReading(available = false, held = false)
+        return RoleReading(
+            available = runCatching { roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT) }
+                .getOrDefault(false),
+            held = runCatching { roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT) }
+                .getOrDefault(false)
+        )
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun requestRoleIntent(): Intent? {
+        val roleManager = runCatching { context.getSystemService(RoleManager::class.java) }
+            .getOrNull() ?: return null
+        val available = runCatching { roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT) }
+            .getOrDefault(false)
+        if (!available) return null
+        return runCatching { roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT) }
+            .getOrNull()
+    }
+
     /** Everything the platform will tell us, in one read. */
     fun report(): AssistantRoleReport {
         val sdkInt = Build.VERSION.SDK_INT
-        val roleManager = if (sdkInt >= AssistantRolePolicy.ROLE_MANAGER_FROM_SDK) {
-            runCatching { context.getSystemService(RoleManager::class.java) }.getOrNull()
+        val role = if (sdkInt >= Build.VERSION_CODES.Q) {
+            readRole()
         } else {
-            null
+            RoleReading(available = false, held = false)
         }
 
-        val roleApiAvailable = roleManager
-            ?.let { runCatching { it.isRoleAvailable(RoleManager.ROLE_ASSISTANT) }.getOrDefault(false) }
-            ?: false
-
-        val roleHeld = roleManager
-            ?.let { runCatching { it.isRoleHeld(RoleManager.ROLE_ASSISTANT) }.getOrDefault(false) }
-            ?: false
+        val roleApiAvailable = role.available
+        val roleHeld = role.held
 
         val voiceInteraction = secureSetting(SETTING_VOICE_INTERACTION_SERVICE)
         val assist = secureSetting(SETTING_ASSISTANT)
@@ -94,18 +123,8 @@ class AssistantRoleManager(private val context: Context) {
      */
     fun settingsIntent(): Intent? {
         val candidates = buildList {
-            if (Build.VERSION.SDK_INT >= AssistantRolePolicy.ROLE_MANAGER_FROM_SDK) {
-                val roleManager = runCatching {
-                    context.getSystemService(RoleManager::class.java)
-                }.getOrNull()
-                val available = roleManager
-                    ?.let { runCatching { it.isRoleAvailable(RoleManager.ROLE_ASSISTANT) }.getOrDefault(false) }
-                    ?: false
-                if (available) {
-                    runCatching { roleManager?.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT) }
-                        .getOrNull()
-                        ?.let { add(it) }
-                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                requestRoleIntent()?.let { add(it) }
             }
             add(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
             // Where voice input settings are missing, the assist picker usually lives

@@ -105,7 +105,13 @@ data class AssistantRoleReport(
  */
 object AssistantRolePolicy {
 
-    /** The API level at which `RoleManager` and ROLE_ASSISTANT appear. */
+    /**
+     * The API level at which `RoleManager` and ROLE_ASSISTANT appear.
+     *
+     * Mirrors `Build.VERSION_CODES.Q`, spelled as a literal so this file stays free of
+     * Android types. The Android side guards against the platform constant directly —
+     * lint can only verify a check written that way — and a test pins the two together.
+     */
     const val ROLE_MANAGER_FROM_SDK = 29
 
     /**

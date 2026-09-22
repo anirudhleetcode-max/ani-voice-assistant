@@ -154,4 +154,12 @@ class AssistantRolePolicyTest {
             }
         }
     }
+    @Test
+    fun `the policy's SDK constant matches the platform constant it mirrors`() {
+        // The Android side guards against Build.VERSION_CODES.Q directly, because lint
+        // only verifies version checks written that way. This keeps the pure copy from
+        // drifting away from it unnoticed.
+        assertEquals(29, AssistantRolePolicy.ROLE_MANAGER_FROM_SDK)
+    }
+
 }
