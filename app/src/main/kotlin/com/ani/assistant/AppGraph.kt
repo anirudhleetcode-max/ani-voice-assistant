@@ -55,6 +55,7 @@ import com.ani.assistant.voice.AndroidTtsProvider
 import com.ani.assistant.voice.SpeechRecognizerProvider
 import com.ani.assistant.voice.TtsProvider
 import com.ani.assistant.voice.VoiceSession
+import com.ani.assistant.voice.assistant.AssistantRoleManager
 import com.ani.assistant.voice.mic.MicArbiter
 import com.ani.assistant.voice.mic.MicTestController
 import com.ani.assistant.voice.wake.PlatformRecognizerWakeEngine
@@ -253,6 +254,15 @@ class AppGraph(private val context: Context) {
      * arbitrate nothing.
      */
     val micArbiter: MicArbiter by lazy { MicArbiter() }
+
+    /**
+     * Whether Ani is the device's assistant — read, never assumed.
+     *
+     * Kept separate from the background-restriction checks because it answers a different
+     * question: those ask whether Ani is allowed to keep running, this asks whether the
+     * system will route the assist gesture and a lock-screen session to it at all.
+     */
+    val assistantRoleManager: AssistantRoleManager by lazy { AssistantRoleManager(context) }
 
     /**
      * The developer microphone test.

@@ -22,8 +22,12 @@ import com.ani.assistant.ui.AniViewModel
 import com.ani.assistant.ui.screens.DiagnosticEntry
 import com.ani.assistant.ui.screens.DiagnosticState
 import com.ani.assistant.ui.theme.AniTheme
+import com.ani.assistant.platform.device.RestrictionCheck
+import com.ani.assistant.platform.device.RestrictionState
 import com.ani.assistant.voice.AniVoiceService
 import com.ani.assistant.voice.ServiceState
+import com.ani.assistant.voice.assistant.AssistantRolePolicy
+import com.ani.assistant.voice.assistant.AssistantRoleState
 import com.ani.assistant.voice.TtsAvailability
 import com.ani.nlu.text.Language
 import kotlinx.coroutines.flow.first
@@ -110,8 +114,14 @@ class MainActivity : ComponentActivity() {
                     deviceDescription = graph.backgroundRestrictions.deviceDescription(),
                     hasAggressiveBatteryManager =
                         graph.backgroundRestrictions.hasAggressiveBatteryManager(),
-                    restrictionChecks = { graph.backgroundRestrictions.checks() },
-                    onOpenRestriction = { graph.backgroundRestrictions.open(it) },
+                    restrictionChecks = ::buildReadinessChecks,
+                    onOpenRestriction = { check ->
+                        if (check.id == ASSISTANT_ROLE_CHECK_ID) {
+                            graph.assistantRoleManager.openSettings()
+                        } else {
+                            graph.backgroundRestrictions.open(check)
+                        }
+                    },
                     onRequestPermission = ::requestPermission,
                     onOpenNotificationSettings = {
                         openSettingsFor(AniPermission.NOTIFICATION_ACCESS)
@@ -185,6 +195,42 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * "Keep Ani Ready", with the assistant role at the top.
+     *
+     * The role belongs here rather than only in Diagnostics because it is the first thing
+     * that decides whether the assist gesture and a lock-screen session reach Ani at all —
+     * and because the state that looks most like success, "Ani opens on the gesture", is
+     * the one that silently cannot do either.
+     */
+    private fun buildReadinessChecks(): List<RestrictionCheck> {
+        val role = graph.assistantRoleManager.report()
+        val assistant = RestrictionCheck(
+            id = ASSISTANT_ROLE_CHECK_ID,
+            title = "Assistant role",
+            explanation = AssistantRolePolicy.explain(role.state) +
+                if (!role.aniDeclaresVoiceInteractionService) {
+                    " This build of Ani ships no voice interaction service yet, so the " +
+                        "system-assistant route is not available to it whatever this is set to."
+                } else {
+                    ""
+                },
+            state = when (role.state) {
+                AssistantRoleState.HELD -> RestrictionState.ALLOWED
+                // Deliberately not RESTRICTED: nothing is blocking Ani, the capability
+                // simply is not there. Reporting a block would send the user hunting for
+                // a setting that would not help.
+                AssistantRoleState.NOT_SUPPORTED, AssistantRoleState.UNKNOWN -> RestrictionState.UNKNOWN
+                else -> RestrictionState.RESTRICTED
+            },
+            settingsIntent = graph.assistantRoleManager.settingsIntent(),
+            // Ani's own listening service is the working wake-word route today, so not
+            // holding the role is not "Ani is not ready".
+            isRequired = false
+        )
+        return listOf(assistant) + graph.backgroundRestrictions.checks()
+    }
+
+    /**
      * The Diagnostics report.
      *
      * Every value is read at call time rather than cached, because the entire purpose of
@@ -198,7 +244,31 @@ class MainActivity : ComponentActivity() {
         val status = ServiceState.status.value
         val restrictions = graph.backgroundRestrictions
 
+        val assistantRole = graph.assistantRoleManager.report()
+
         return buildList {
+            add(
+                DiagnosticEntry(
+                    label = "Assistant role",
+                    value = when (assistantRole.state) {
+                        AssistantRoleState.HELD -> "Ani (system assistant)"
+                        AssistantRoleState.LEGACY_ASSIST_ONLY -> "Ani (gesture only)"
+                        AssistantRoleState.AVAILABLE_NOT_HELD -> "Another app"
+                        AssistantRoleState.NOT_SUPPORTED -> "Not supported"
+                        AssistantRoleState.UNKNOWN -> "Unknown"
+                    },
+                    // "Gesture only" is a warning, not a success. It is the state that
+                    // looks like the feature working and is not.
+                    state = when (assistantRole.state) {
+                        AssistantRoleState.HELD -> DiagnosticState.OK
+                        AssistantRoleState.LEGACY_ASSIST_ONLY -> DiagnosticState.WARNING
+                        AssistantRoleState.AVAILABLE_NOT_HELD -> DiagnosticState.NEUTRAL
+                        AssistantRoleState.NOT_SUPPORTED -> DiagnosticState.NEUTRAL
+                        AssistantRoleState.UNKNOWN -> DiagnosticState.WARNING
+                    },
+                    detail = AssistantRolePolicy.explain(assistantRole.state)
+                )
+            )
             add(
                 DiagnosticEntry(
                     label = "Voice service",
@@ -413,6 +483,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        /** Identifies the assistant-role row so Keep Ani Ready routes it to the right screen. */
+        const val ASSISTANT_ROLE_CHECK_ID = "assistant_role"
+
         const val TAG = "AniMainActivity"
 
         val DIAGNOSTIC_TIME_FORMAT =
